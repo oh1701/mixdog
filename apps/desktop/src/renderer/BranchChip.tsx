@@ -393,7 +393,7 @@ function useBranchChipActions({
   };
   const createBranch = () => {
     if (busy) return;
-    const name = query.trim() || window.prompt(t('New branch name'))?.trim() || '';
+    const name = query.trim();
     if (name) void selectBranch(name, true);
   };
 
@@ -440,6 +440,20 @@ function BranchMenuPanel({
   onCreateBranch(): void;
   onEscape(): void;
 }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [enteringName, setEnteringName] = useState(false);
+  const createOrEnterName = () => {
+    if (busy) return;
+    if (!query.trim()) {
+      // Electron does not support window.prompt; reuse the menu's input.
+      setEnteringName(true);
+      input.current?.focus();
+      return;
+    }
+    onCreateBranch();
+  };
+  const inputLabel = enteringName ? t('New branch name') : t('Search branches');
+
   return (
     <div
       ref={panel}
@@ -451,14 +465,21 @@ function BranchMenuPanel({
       onKeyDown={(event) => moveMenuFocus(event, panel.current, onEscape)}
     >
       <input
-        type="search"
+        ref={input}
+        type={enteringName ? 'text' : 'search'}
         className="branch-menu-search"
         value={query}
         // biome-ignore lint/a11y/noAutofocus: the search field is the point of the opened menu; touch devices are excluded
         autoFocus={!touchPrimaryPointer()}
-        aria-label={t('Search branches')}
-        placeholder={t('Search branches')}
+        aria-label={inputLabel}
+        placeholder={inputLabel}
         onChange={(event) => onQuery(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (enteringName && event.key === 'Enter' && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            createOrEnterName();
+          }
+        }}
       />
       {notice && (
         <p className="branch-menu-notice" role="alert">
@@ -497,7 +518,7 @@ function BranchMenuPanel({
         className="branch-menu-item"
         data-kind="create"
         aria-disabled={busy || undefined}
-        onClick={onCreateBranch}
+        onClick={createOrEnterName}
       >
         <Plus size={14} aria-hidden="true" />
         <span>{t('New branch')}</span>

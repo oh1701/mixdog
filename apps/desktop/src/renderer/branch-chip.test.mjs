@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import React, { act } from 'react';
-import { createRoot } from 'react-dom/client';
 import { installTestDom } from './test-support/test-dom.mjs';
 
 installTestDom(null, {
@@ -9,8 +8,8 @@ installTestDom(null, {
   jsdom: { url: 'https://mixdog.test/' },
   expose: ['HTMLElement', 'Element', 'Node', 'navigator'],
 });
-// A coarse primary pointer keeps the search field from auto-focusing, which
-// jsdom's legacy input-event path cannot service.
+const { createRoot } = await import('react-dom/client');
+// A coarse primary pointer keeps the search field from auto-focusing.
 window.matchMedia = (query) => ({
   matches: query.includes('coarse'),
   addEventListener() {},
@@ -113,6 +112,121 @@ const openMenu = async (trigger) => {
 };
 const items = (menu) => [...menu.querySelectorAll('.branch-menu-item')];
 const settle = () => act(async () => {});
+const typeBranchName = async (input, value) => {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, value);
+    input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+};
+const pressBranchKey = async (input, key, options = {}) => {
+  await act(async () =>
+    input.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true, ...options }))
+  );
+};
+
+for (const draft of [false, true]) {
+  test(`new branch accepts an inline name without native prompt (${draft ? 'draft' : 'session'})`, async (t) => {
+    setUiLanguagePreference('en');
+    await initUiLanguage();
+    menuReply = menuFor();
+    projectMenuReply = draftMenu();
+    const prompt = t.mock.method(window, 'prompt', () => {
+      throw new Error('prompt() is and will not be supported.');
+    });
+    const draftId = 'inline-branch';
+    const { trigger } = await mount(t, draft ? { sessionId: '', draftId } : {});
+    if (draft) await act(async () => model.setWorktreeIntent(draftId, true));
+    t.after(async () => act(async () => model.setWorktreeIntent(draftId, false)));
+    const capability = draft ? 'selectProjectBranch' : 'selectBranch';
+    handlers[capability] = () => {
+      const updated = menuFor({ workspace: workspace({ branch: 'feat/inline', revision: 4 }) });
+      if (draft) projectMenuReply = updated;
+      else menuReply = updated;
+      return { revision: 4, workspace: updated.workspace };
+    };
+    const menu = await openMenu(trigger);
+    calls.length = 0;
+    await act(async () => menu.querySelector('[data-kind="create"]').click());
+    const input = menu.querySelector('input[aria-label="New branch name"]');
+    assert.ok(input, 'New branch must show an inline name field');
+    assert.equal(document.activeElement, input);
+    assert.equal(prompt.mock.callCount(), 0);
+    assert.deepEqual(calls, []);
+    await typeBranchName(input, '   ');
+    await pressBranchKey(input, 'Enter');
+    assert.deepEqual(calls, [], 'blank names must not reach the runtime');
+    await typeBranchName(input, '  feat/inline  ');
+    await pressBranchKey(input, 'Enter', { isComposing: true });
+    assert.deepEqual(calls, [], 'IME confirmation must not create a branch');
+    if (draft) await act(async () => menu.querySelector('[data-kind="create"]').click());
+    else await pressBranchKey(input, 'Enter');
+    assert.deepEqual(calls.filter((call) => call.capability === capability), [
+      draft
+        ? { capability, args: [{ projectPath: '/p', branch: 'feat/inline', create: true }] }
+        : { capability, args: [{ branch: 'feat/inline', create: true, expectedRevision: 3 }], sessionId: 's1' },
+    ]);
+    assert.equal(document.querySelector('.branch-menu'), null);
+    assert.equal(trigger.querySelector('.branch-chip-label').textContent, 'feat/inline');
+    assert.equal(document.activeElement, trigger);
+    if (draft) assert.equal(model.getWorktreeIntent(draftId), false);
+  });
+}
+
+test('new branch can use the existing search text directly', async (t) => {
+  menuReply = menuFor();
+  const { trigger } = await mount(t);
+  handlers.selectBranch = () => ({ workspace: workspace(), revision: 4 });
+  const menu = await openMenu(trigger);
+  await typeBranchName(menu.querySelector('input'), '  feat/from-search  ');
+  await act(async () => menu.querySelector('[data-kind="create"]').click());
+  assert.deepEqual(calls.filter((call) => call.capability === 'selectBranch'), [
+    {
+      capability: 'selectBranch',
+      args: [{ branch: 'feat/from-search', create: true, expectedRevision: 3 }],
+      sessionId: 's1',
+    },
+  ]);
+});
+
+test('inline branch creation can be cancelled and reopens as search', async (t) => {
+  menuReply = menuFor();
+  const { trigger } = await mount(t);
+  let menu = await openMenu(trigger);
+  await act(async () => menu.querySelector('[data-kind="create"]').click());
+  const input = menu.querySelector('input[aria-label="New branch name"]');
+  assert.ok(input);
+  await typeBranchName(input, 'feat/cancelled');
+  await pressBranchKey(input, 'Escape');
+  assert.equal(document.querySelector('.branch-menu'), null);
+  assert.equal(document.activeElement, trigger);
+  assert.equal(calls.some((call) => call.capability === 'selectBranch'), false);
+  menu = await openMenu(trigger);
+  assert.equal(menu.querySelector('input').getAttribute('aria-label'), 'Search branches');
+  assert.equal(menu.querySelector('input').value, '');
+});
+
+test('inline branch creation blocks duplicate requests and preserves failed names for retry', async (t) => {
+  menuReply = menuFor();
+  const { trigger } = await mount(t);
+  let rejectCreation;
+  handlers.selectBranch = () => new Promise((_, reject) => { rejectCreation = reject; });
+  const menu = await openMenu(trigger);
+  await act(async () => menu.querySelector('[data-kind="create"]').click());
+  const input = menu.querySelector('input[aria-label="New branch name"]');
+  assert.ok(input);
+  await typeBranchName(input, 'feat/retry');
+  await pressBranchKey(input, 'Enter');
+  await pressBranchKey(input, 'Enter');
+  await act(async () => menu.querySelector('[data-kind="create"]').click());
+  assert.equal(calls.filter((call) => call.capability === 'selectBranch').length, 1);
+  await act(async () => rejectCreation(new Error('Branch creation failed')));
+  assert.match(menu.querySelector('[role="alert"]').textContent, /Branch creation failed/);
+  assert.equal(input.value, 'feat/retry');
+  handlers.selectBranch = () => ({ workspace: workspace(), revision: 4 });
+  await pressBranchKey(input, 'Enter');
+  assert.equal(calls.filter((call) => call.capability === 'selectBranch').length, 2);
+  assert.equal(document.querySelector('.branch-menu'), null);
+});
 
 test('menu structure: search, worktree, branch section, separator, new branch', async (t) => {
   setUiLanguagePreference('en');
