@@ -192,6 +192,41 @@ $msaaSetResult.verified -eq $true -and $msaaValue.Text -eq 'ref-value'
             $msaaActionMatch.Success, $msaaValueMatch.Success, $msaaAction.ActivationCount, $msaaValue.Text,
             $msaaInvokeResult.path, $msaaSetResult.path, $msaaSetResult.verified, $msaaActionSnapshot.text)
     })
+if (-not $msaaRefActionsOk) {
+    # Freeze the failed result above before any diagnostic snapshot changes refs.
+    # The earlier direct invoke exercises the ordinary "native" button, not this action.
+    $msaaRefFailure = $probeResults[$probeResults.Count - 1]
+    $msaaNodeFields = @('Key', 'Name', 'ControlType', 'X', 'Y', 'Width', 'Height', 'State', 'Invisible', 'DefaultAction')
+    $msaaRefFailure.error += '; earlierMsaaNodes=' + (ConvertTo-Json -Compress -InputObject @(
+            $msaaNodes | Select-Object -Property $msaaNodeFields
+        ))
+    $msaaDiagnosticSnapshot = [MixMsaa]::SnapshotWithStatus($form.Handle, [MixWin32]::WindowId($form.Handle), 100)
+    $msaaRefFailure.error += '; rawMsaa=' + (ConvertTo-Json -Compress -Depth 4 -InputObject @{
+            Complete = $msaaDiagnosticSnapshot.Complete
+            Nodes = @($msaaDiagnosticSnapshot.Nodes | Select-Object -Property $msaaNodeFields)
+        })
+    $msaaManagedAction = $msaaAction.AccessibilityObject
+    $msaaRefFailure.error += '; managedAction=' + (ConvertTo-Json -Compress -InputObject @{
+            Name = $msaaManagedAction.Name
+            Role = [string]$msaaManagedAction.Role
+            Bounds = [string]$msaaManagedAction.Bounds
+            State = [string]$msaaManagedAction.State
+            DefaultAction = $msaaManagedAction.DefaultAction
+            ClientBounds = [string]$msaaAction.ClientRectangle
+            ScreenClientBounds = [string]$msaaAction.RectangleToScreen($msaaAction.ClientRectangle)
+        })
+    $msaaRawActions = @($msaaDiagnosticSnapshot.Nodes | Where-Object {
+            $_.Name -eq 'msaa action fixture' -and $_.DefaultAction
+        })
+    if ($msaaRawActions.Count -eq 0) {
+        $msaaDiagnosticBroadSnapshot = Snapshot-Window ([pscustomobject]@{
+                window_id = [MixWin32]::WindowId($form.Handle); window = $null
+                query = 'msaa action fixture'; role = ''; visible_only = $false
+                include_noninteractive = $true; max_elements = 20; continuation = $null
+            })
+        $msaaRefFailure.error += '; broadActionTree=' + $msaaDiagnosticBroadSnapshot.text
+    }
+}
 $msaaValue.Text = ''
 [Console]::Error.WriteLine('probe:background-pointer')
 $buttonPoint = $button.PointToScreen((New-Object System.Drawing.Point(10, 10)))
