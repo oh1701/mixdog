@@ -42,6 +42,7 @@ export type ConversationComposerDockProps = Pick<
   draftMode: boolean;
   draftId: string;
   reviewActive: boolean;
+  dockRef: RefObject<HTMLDivElement | null>;
   dropTargetRef: RefObject<HTMLElement | null>;
   routeProject: string;
   island: ConversationIsland;
@@ -156,6 +157,7 @@ export function ConversationComposerDock(props: ConversationComposerDockProps) {
     onOpenAgentSession,
     onClearToNewTask,
     onInheritSession,
+    dockRef,
     dropTargetRef,
     routeProject,
     island,
@@ -175,6 +177,7 @@ export function ConversationComposerDock(props: ConversationComposerDockProps) {
     : actions.composerSubmit;
   return (
     <ComposerDock
+      dockRef={dockRef}
       sessionId={draftMode ? '' : String(snapshot.sessionId || '')}
       goalIsland={goalIsland}
       goalSubmissionId={submission.goalSubmissionId}
