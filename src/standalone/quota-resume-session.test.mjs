@@ -297,10 +297,14 @@ test('a quota-failed Lead or Goal turn queues its resume and a fire resumes it o
   assert.equal(await api.resume(N), true);
   assert.equal(store.quotaResumeEntry(N).turnKey, automaticEntry.turnKey);
   const automaticBefore = sends.at(-1);
+  const automaticRetryIndex = sends.length;
   assert.equal(await api.fireQuotaResume({ generation: automaticEntry.generation }), 'fired');
-  await until(() => sends.at(-1) !== automaticBefore && !api.getState().busy, 'automatic notification retry');
-  assert.equal(sends.at(-1).lastUser, automaticBefore.lastUser);
-  assert.equal(sends.at(-1).users, automaticBefore.users);
+  await until(() => sends.length > automaticRetryIndex && !api.getState().busy, 'automatic notification retry');
+  // The revived Goal may already have sent its next continuation by the
+  // time the idle snapshot arrives. Check the retry, not that later request.
+  const automaticRetry = sends[automaticRetryIndex];
+  assert.equal(automaticRetry.lastUser, automaticBefore.lastUser);
+  assert.equal(automaticRetry.users, automaticBefore.users);
   assert.equal(store.quotaResumeEntry(N), null);
   const durableMessages = (await api.readModelMessages()).messages;
   const restored = restoreTranscriptItems(durableMessages, { sessionId: N });
