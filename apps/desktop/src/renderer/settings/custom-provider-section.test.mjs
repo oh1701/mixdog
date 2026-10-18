@@ -670,10 +670,13 @@ test('the editor offers exactly the runtime reasoning levels', async () => {
 
 test('model editor sends only touched fields: chips, explicit [], reset null', async (t) => {
   const calls = [];
+  const provider = withRows({
+    modelOverrides: { 'acme-1': { maxOutputTokens: 9, reasoning: { levels: ['low', 'high'] } } },
+  });
   const { render } = mount(t, {
     calls,
-    api: [withRows({ modelOverrides: OVERRIDDEN })],
-    handlers: { updateCustomProviderModel: () => ({}) },
+    api: [provider],
+    handlers: { updateCustomProviderModel: () => provider },
   });
   await render();
   await click(button('Edit'));
@@ -829,6 +832,85 @@ test('refresh with an empty model list shows the empty-result message', async (t
   await click(button('Refresh models'));
   assert.match(alerts(), /Automatic discovery returned no models|자동 검색에서 모델이 반환되지 않았습니다/);
 });
+
+for (const manual of [true, false]) {
+  test(`nested model save survives outer provider save before refresh (manual=${manual})`, async (t) => {
+    const { mkdtempSync, readFileSync, writeFileSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const admin = await import('../../../../../src/session-runtime/services/provider-admin.mjs');
+    const { effectiveCustomModelRows } = await import(
+      '../../../../../src/runtime/agent/orchestrator/providers/custom-provider-config.mjs'
+    );
+    const dir = mkdtempSync(join(tmpdir(), 'custom-model-save-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const file = join(dir, 'config.json');
+    writeFileSync(file, JSON.stringify({ providers: {} }));
+    const cfg = {
+      loadConfig: () => JSON.parse(readFileSync(file, 'utf8')),
+      saveConfig: (value) => writeFileSync(file, JSON.stringify(value)),
+    };
+    const id = 'deepseek-ai/deepseek-v4.1-flash-1017';
+    const initial = await admin.saveCustomProvider(cfg, {
+      schemaVersion: 2,
+      name: 'Hive test',
+      protocol: 'openai-chat',
+      baseURL: 'http://localhost:1234/v1',
+      auth: 'none',
+      modelOverrides: manual ? { [id]: { manual: true } } : {},
+    });
+    const calls = [];
+    const expected = {
+      ...(manual ? { manual: true } : {}),
+      name: 'Flash test',
+      contextWindow: 1000000,
+      reasoning: { levels: ['none', 'low', 'high', 'max'] },
+    };
+    const { render } = mount(t, {
+      calls,
+      // Deliberately keep parent props stale, as while capability refresh is pending.
+      api: [initial],
+      handlers: {
+        updateCustomProviderModel: (...args) => admin.updateCustomProviderModel(cfg, ...args),
+        saveCustomProvider: (input) => admin.saveCustomProvider(cfg, input),
+        discoverCustomProviderModels: () => ({
+          models: effectiveCustomModelRows(cfg.loadConfig().providers[initial.id], [{ id }], {
+            providerId: initial.id,
+          }),
+        }),
+      },
+    });
+    await render();
+    await click(button('Edit'));
+    await type(field('Display name'), 'Provider draft');
+    if (!manual) await click(button('Refresh models'));
+    await click(button(`Edit model ${id}`));
+    const editor = () => document.querySelector('.settings-model-editor');
+    await type(editor().querySelector('input[id$="-name"]'), 'Flash test');
+    await type(editor().querySelector('input[id$="-contextWindow"]'), '1000000');
+    for (const level of ['none', 'low', 'high', 'max']) {
+      await click([...editor().querySelectorAll('.settings-model-chip')].find((el) => el.textContent === level));
+    }
+    await click(editorBtn('Save'));
+    assert.deepEqual(cfg.loadConfig().providers[initial.id].modelOverrides[id], expected, 'inner save persisted');
+    // Reopen before parent props refresh: use the save receipt, not the stale row.
+    await click(button(`Edit model ${id}`));
+    assert.equal(editor().querySelector('input[id$="-name"]').value, 'Flash test');
+    assert.equal(editor().querySelector('input[id$="-contextWindow"]').value, '1000000');
+    assert.deepEqual(
+      [...editor().querySelectorAll('.settings-model-chip[aria-pressed=true]')].map((el) => el.textContent),
+      expected.reasoning.levels
+    );
+    await click(editorBtn('Cancel'));
+    await submit();
+    assert.deepEqual(
+      cfg.loadConfig().providers[initial.id].modelOverrides[id],
+      expected,
+      'outer save must not overwrite the already persisted model settings'
+    );
+    assert.equal(cfg.loadConfig().providers[initial.id].name, 'Provider draft');
+  });
+}
 
 test('IPC envelopes are stripped and known failures are localized', async (t) => {
   const calls = [];

@@ -58,7 +58,7 @@ export function CustomModelEditor({
   override?: RecordValue;
   run: (capability: any, args?: unknown[], key?: string, refresh?: boolean, ...rest: any[]) => Promise<unknown>;
   onClose(): void;
-  onSaved?(patch: Patch): void;
+  onSaved?(patch: Patch, provider: RecordValue): void;
 }) {
   const uid = useId();
   const modelId = String(row.id);
@@ -87,25 +87,33 @@ export function CustomModelEditor({
   };
   const inherited = (key: string) => has(patch, key) && patch[key] === null;
 
-  const hidden = has(patch, 'hidden') && patch.hidden !== null ? Boolean(patch.hidden) : row.hidden === true;
+  const hidden =
+    has(patch, 'hidden') && patch.hidden !== null ? Boolean(patch.hidden) : (ov.hidden ?? row.hidden) === true;
   const text = (key: 'name' | 'contextWindow' | 'maxOutputTokens', rowKey: string) => {
     if (has(patch, key) && patch[key] !== null) return String(patch[key]);
     if (inherited(key)) return '';
+    if (ov[key] !== undefined && ov[key] !== null) return String(ov[key]);
     return row[rowKey] === undefined || row[rowKey] === null ? '' : String(row[rowKey]);
   };
   const levels: ReasoningLevel[] =
     has(reasoning, 'levels') && reasoning.levels !== null
       ? (reasoning.levels as ReasoningLevel[])
-      : effectiveLevels(row);
+      : Array.isArray(ovReasoning.levels)
+        ? toggleLevelsFrom(ovReasoning.levels.filter(isLevel))
+        : effectiveLevels(row);
   const wireFormat =
     has(reasoning, 'wireFormat') && reasoning.wireFormat !== null
       ? String(reasoning.wireFormat)
-      : String(custom.wireFormat || 'standard');
+      : String(ovReasoning.wireFormat ?? custom.wireFormat ?? 'standard');
   const wireValues = (
-    has(reasoning, 'wireValues') && reasoning.wireValues !== null ? reasoning.wireValues : (custom.wireValues ?? {})
+    has(reasoning, 'wireValues') && reasoning.wireValues !== null
+      ? reasoning.wireValues
+      : (ovReasoning.wireValues ?? custom.wireValues ?? {})
   ) as Record<string, string>;
   const replay =
-    has(reasoning, 'replay') && reasoning.replay !== null ? Boolean(reasoning.replay) : custom.replay === true;
+    has(reasoning, 'replay') && reasoning.replay !== null
+      ? Boolean(reasoning.replay)
+      : (ovReasoning.replay ?? custom.replay) === true;
 
   const overridden = (value: unknown) => value !== undefined;
   const reset = (apply: () => void, isOverridden: boolean, touched: boolean, label: string) => (
@@ -160,8 +168,15 @@ export function CustomModelEditor({
     }
     setSaving(true);
     try {
-      await run('updateCustomProviderModel', [providerId, modelId, out], `custom-model-${uid}`, true, true, 'throw');
-      onSaved?.(out);
+      const saved = await run(
+        'updateCustomProviderModel',
+        [providerId, modelId, out],
+        `custom-model-${uid}`,
+        true,
+        true,
+        'throw'
+      );
+      onSaved?.(out, record(saved));
       onClose();
     } catch (reason) {
       setError(errorMessage(reason));

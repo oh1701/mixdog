@@ -171,6 +171,10 @@ function CustomProviderForm({
   onClose(): void;
 }) {
   const uid = useId();
+  // Model saves persist independently. Keep their receipts until this form
+  // closes so a delayed capability refresh cannot make the outer save undo them.
+  const [savedOverrides, setSavedOverrides] = useState<RecordValue>({});
+  const modelOverrides = { ...record(provider?.modelOverrides), ...savedOverrides };
   const [rows, setRows] = useState<CustomModel[]>(provider ? customModels(provider) : []);
   // A saved model edit (or any other change of the provider's effective
   // models) refreshes the rows; the other form fields keep their drafts.
@@ -258,7 +262,7 @@ function CustomProviderForm({
       protocol,
       baseURL: baseURL.trim(),
       auth: keyless ? 'none' : 'key',
-      modelOverrides: overridesWithManual(provider, withDraft),
+      modelOverrides: overridesWithManual({ ...provider, modelOverrides }, withDraft),
     };
     if (provider) input.id = provider.id;
     if (!keyless && envMode) {
@@ -665,8 +669,16 @@ function CustomProviderForm({
           providerId={String(provider.id)}
           protocol={protocol}
           row={rows.find((row) => row.id === editingModel) as unknown as RecordValue}
-          override={record(record(provider.modelOverrides)[editingModel])}
+          override={record(modelOverrides[editingModel])}
           run={run}
+          onSaved={(_patch, saved) => {
+            setSavedOverrides((previous) => ({
+              ...previous,
+              [editingModel]: record(record(saved.modelOverrides)[editingModel]),
+            }));
+            const model = customModels(saved).find((row) => row.id === editingModel);
+            if (model) setRows((previous) => previous.map((row) => (row.id === editingModel ? model : row)));
+          }}
           onClose={() => setEditingModel(null)}
         />
       )}
