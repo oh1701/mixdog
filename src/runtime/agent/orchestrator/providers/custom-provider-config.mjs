@@ -428,27 +428,37 @@ function effectiveRow(base, override, { providerId, discovered, newModelsHidden 
 }
 
 /**
- * Pure layering: discovered rows (catalog-enriched) as base → overrides by
- * property presence → manual overrides missing from discovery appended.
+ * The manually configured ids (`manual: true` overrides) in config order.
+ * Their presence switches the provider to manual listing: they are the whole
+ * model list and automatic discovery is skipped. Other overrides alone do not
+ * disable discovery.
+ */
+export function manualCustomModelIds(config) {
+  const overrides = config?.modelOverrides || {};
+  return Object.entries(overrides)
+    .filter(([, override]) => override?.manual === true)
+    .map(([id]) => id);
+}
+
+/**
+ * Manual ids are the allowlist when present; otherwise discovered ids form
+ * the list. Metadata and property-presence overrides apply in either mode.
  * `config` is a normalized v2 config. Hidden rows are kept.
  */
 export function effectiveCustomModelRows(config, discoveredRows, { providerId } = {}) {
   const overrides = config?.modelOverrides || {};
   const newModelsHidden = config?.discovery?.newModelsHidden === true;
-  const rows = [];
-  const seen = new Set();
+  const manualIds = manualCustomModelIds(config);
+  const manualOnly = manualIds.length > 0;
+  const discoveredById = new Map();
   for (const row of Array.isArray(discoveredRows) ? discoveredRows : []) {
     const id = typeof row?.id === 'string' ? row.id : '';
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
+    if (!id || discoveredById.has(id)) continue;
+    discoveredById.set(id, row);
+  }
+  return (manualOnly ? manualIds : [...discoveredById.keys()]).map((id) => {
     const override = Object.hasOwn(overrides, id) ? overrides[id] : undefined;
-    rows.push(effectiveRow(row, override, { providerId, discovered: true, newModelsHidden }));
-  }
-  for (const [id, override] of Object.entries(overrides)) {
-    if (!override?.manual || seen.has(id)) continue;
-    seen.add(id);
-    const base = { id, name: id, provider: providerId, contextWindow: 0, outputTokens: null };
-    rows.push(effectiveRow(base, override, { providerId, discovered: false, newModelsHidden }));
-  }
-  return rows;
+    const base = discoveredById.get(id) || { id, name: id, provider: providerId, contextWindow: 0, outputTokens: null };
+    return effectiveRow(base, override, { providerId, discovered: !manualOnly, newModelsHidden });
+  });
 }

@@ -1,5 +1,5 @@
-import { Check, Plus, Search, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Check, Plus, Search, Star, X } from 'lucide-react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import type { DesktopModelOption } from '../shared/contract';
 import { t } from './i18n';
@@ -17,6 +17,7 @@ import type { RecordValue } from './desktop-types';
 
 const RECENT_MODELS_KEY = 'mixdog.desktop-recent-models';
 const RECENT_MODELS_LIMIT = 7;
+const FAVORITE_MODELS_KEY = 'mixdog.desktop-favorite-models';
 // A drilled catalog can unmount between choices; acknowledgement order must
 // not rewind recents across catalog instances.
 let latestModelChoice = 0;
@@ -110,6 +111,25 @@ function writeRecentModelKeys(keys: string[]): void {
   }
 }
 
+// Favorites keep keys of models that are currently unavailable; they only
+// render while the catalog lists them.
+function readFavoriteModelKeys(fallback: string[] = []): string[] {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(FAVORITE_MODELS_KEY) || '[]');
+    return Array.isArray(value) ? [...new Set(value.filter((entry): entry is string => typeof entry === 'string'))] : [];
+  } catch {
+    return fallback;
+  }
+}
+
+function writeFavoriteModelKeys(keys: string[]): void {
+  try {
+    window.localStorage.setItem(FAVORITE_MODELS_KEY, JSON.stringify(keys));
+  } catch {
+    // The star still toggles for this session when storage is unavailable.
+  }
+}
+
 function emptyCatalogText(loading: boolean, hasQuery: boolean): string {
   if (loading) return t('Loading models…');
   return hasQuery ? t('No matching models.') : t('No connected provider models.');
@@ -143,9 +163,11 @@ export function ModelCatalog({
   onOpenProviders?: () => void;
   onClose(): void;
 }) {
+  const headingId = useId();
   const [query, setQuery] = useState('');
   const [activeRowKey, setActiveRowKey] = useState('');
   const [recentModelKeys, setRecentModelKeys] = useState<string[]>(readRecentModelKeys);
+  const [favoriteModelKeys, setFavoriteModelKeys] = useState<string[]>(readFavoriteModelKeys);
   const dialog = useRef<HTMLElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const modelList = useRef<HTMLDivElement>(null);
@@ -160,6 +182,7 @@ export function ModelCatalog({
       return;
     }
     setRecentModelKeys(readRecentModelKeys());
+    setFavoriteModelKeys(readFavoriteModelKeys());
     // Opening the list must not summon the keyboard on a phone: it covered
     // half the catalog before a single row was read (user: 검색창 터치도 안
     // 했는데 바로 타이핑창 열리게 하지 말고). The field waits for a tap.
@@ -202,24 +225,38 @@ export function ModelCatalog({
     const option = models.find((entry) => modelKey(entry) === key);
     return option && matchesQuery(option) ? [option] : [];
   });
+  const favoriteModels = favoriteModelKeys.flatMap((key) => {
+    const option = models.find((entry) => modelKey(entry) === key);
+    return option && matchesQuery(option) ? [option] : [];
+  });
   const renderedKeys = [
+    ...favoriteModels.map((option) => modelKey(option, 'favorite:')),
     ...recentModels.map((option) => modelKey(option, 'recent:')),
     ...visibleProviderEntries.flatMap(([, options]) => options.map((option) => modelKey(option))),
   ];
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the derived lists are recomputed each render; the primitive inputs (normalizedQuery, models, recentModelKeys) are the intended triggers.
-  useEffect(() => {
-    if (!active) return;
-    const recent = recentModels.find((option) => option.provider === provider && option.model === model);
-    if (recent) {
-      setActiveRowKey(modelKey(recent, 'recent:'));
-      return;
+  const defaultActiveRowKey = () => {
+    for (const [scope, scoped] of [
+      ['favorite:', favoriteModels],
+      ['recent:', recentModels],
+    ] as const) {
+      const match = scoped.find((option) => option.provider === provider && option.model === model);
+      if (match) return modelKey(match, scope);
     }
     const visibleModels = visibleProviderEntries.flatMap(([, options]) => options);
     const preferred =
       visibleModels.find((option) => option.provider === provider && option.model === model) || visibleModels[0];
-    setActiveRowKey(preferred ? modelKey(preferred) : '');
+    return preferred ? modelKey(preferred) : '';
+  };
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the derived lists are recomputed each render; the primitive inputs (normalizedQuery, models, recentModelKeys) are the intended triggers.
+  useEffect(() => {
+    if (active) setActiveRowKey(defaultActiveRowKey());
   }, [active, model, normalizedQuery, models, provider, recentModelKeys]);
+  // Starring never moves the highlighted row unless its row left the list.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: favoriteModelKeys is the trigger; the derived lists are recomputed each render.
+  useEffect(() => {
+    if (active) setActiveRowKey((current) => (renderedKeys.includes(current) ? current : defaultActiveRowKey()));
+  }, [favoriteModelKeys]);
 
   const focusRow = (index: number) => {
     const options = Array.from(
@@ -230,6 +267,22 @@ export function ModelCatalog({
     setActiveRowKey(target.dataset.rowKey || '');
     target.focus({ preventScroll: true });
     target.scrollIntoView({ block: 'nearest' });
+  };
+  const toggleFavorite = (option: DesktopModelOption) => {
+    const key = modelKey(option);
+    // Re-read so another catalog instance's stars are not overwritten.
+    const stored = readFavoriteModelKeys(favoriteModelKeys);
+    const next = stored.includes(key) ? stored.filter((entry) => entry !== key) : [...stored, key];
+    writeFavoriteModelKeys(next);
+    setFavoriteModelKeys(next);
+    // A removed Favorites row takes its star with it; keep keyboard focus in the list.
+    window.requestAnimationFrame(() => {
+      if (dialog.current?.contains(document.activeElement)) return;
+      const candidates = Array.from(
+        dialog.current?.querySelectorAll<HTMLButtonElement>('.model-favorite-toggle') || []
+      );
+      (candidates.find((button) => button.dataset.modelKey === key) || candidates[0])?.focus({ preventScroll: true });
+    });
   };
   const navigateRows = (event: React.KeyboardEvent, fromSearch = false) => {
     if (event.key === 'Enter' && fromSearch && !event.nativeEvent.isComposing) {
@@ -256,7 +309,9 @@ export function ModelCatalog({
       if (initialized >= 0) return focusRow(initialized);
       return focusRow(event.key === 'ArrowDown' ? 0 : options.length - 1);
     }
-    const current = options.indexOf(document.activeElement as HTMLButtonElement);
+    // A row's star carries the same row key, so arrows continue from its row.
+    const focusedKey = (document.activeElement as HTMLElement | null)?.dataset.rowKey;
+    const current = options.findIndex((option) => option.dataset.rowKey === focusedKey);
     focusRow(current + (event.key === 'ArrowDown' ? 1 : -1));
   };
   const choose = async (option: DesktopModelOption) => {
@@ -296,7 +351,7 @@ export function ModelCatalog({
           <span className="model-row-title">
             <strong>
               {modelDisplayName(option.model, option.provider, option.display)}
-              {scope === 'recent:' && (
+              {scope !== '' && (
                 <span className="model-row-source">{` (${resolveProviderLabel(option.provider)})`}</span>
               )}
             </strong>
@@ -310,6 +365,41 @@ export function ModelCatalog({
       </button>
     );
   };
+
+  // Options stay the only children of their listbox; each row's star lives in
+  // a parallel column of equal-height rows, so no button nests in an option.
+  const renderModelItems = (options: DesktopModelOption[], scope: string, labelledBy: string) => (
+    <div className="model-items">
+      <div className="model-options" role="listbox" aria-labelledby={labelledBy}>
+        {options.map((option) => renderModelOption(option, scope))}
+      </div>
+      <div className="model-favorite-actions">
+        {options.map((option) => {
+          const favorite = favoriteModelKeys.includes(modelKey(option));
+          const name = `${modelDisplayName(option.model, option.provider, option.display)} (${resolveProviderLabel(option.provider)})`;
+          const label = favorite
+            ? t('Remove {{model}} from favorites', { model: name })
+            : t('Add {{model}} to favorites', { model: name });
+          return (
+            <button
+              type="button"
+              className="model-favorite-toggle"
+              key={modelKey(option, scope)}
+              data-row-key={modelKey(option, scope)}
+              data-model-key={modelKey(option)}
+              data-favorite={favorite}
+              aria-label={label}
+              data-tooltip={favorite ? t('Remove from favorites') : t('Add to favorites')}
+              onKeyDown={(event) => navigateRows(event)}
+              onClick={() => toggleFavorite(option)}
+            >
+              <Star size={14} aria-hidden="true" fill={favorite ? 'currentColor' : 'none'} />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 
   return (
     <section
@@ -365,7 +455,7 @@ export function ModelCatalog({
                 </button>
               )}
             </div>
-            <div ref={modelList} className="model-list" role="listbox" aria-label={t('Available models')}>
+            <div ref={modelList} className="model-list" role="group" aria-label={t('Available models')}>
               {catalogError && <ErrorNotice error={catalogError} role="status" />}
               {providerSetupError && (
                 <p className="model-notice" role="status">
@@ -377,23 +467,27 @@ export function ModelCatalog({
                   {emptyCatalogText(catalogRefreshing || !catalogLoaded, Boolean(normalizedQuery))}
                 </p>
               )}
+              {favoriteModels.length > 0 && (
+                <section className="model-group model-group--favorites">
+                  <h3 id={`${headingId}-favorites`}>{t('Favorites')}</h3>
+                  {renderModelItems(favoriteModels, 'favorite:', `${headingId}-favorites`)}
+                </section>
+              )}
               {recentModels.length > 0 && (
                 <section className="model-group model-group--recent">
-                  <h3>{t('Recent')}</h3>
-                  <div className="model-items">
-                    {recentModels.map((option) => renderModelOption(option, 'recent:'))}
-                  </div>
+                  <h3 id={`${headingId}-recent`}>{t('Recent')}</h3>
+                  {renderModelItems(recentModels, 'recent:', `${headingId}-recent`)}
                 </section>
               )}
               {visibleProviderEntries.map(([entryProvider, options]) => (
                 <section className="model-group model-group--provider" key={entryProvider}>
-                  <h3>
+                  <h3 id={`${headingId}-provider-${entryProvider}`}>
                     <span className="model-provider-heading">
                       <ProviderIcon provider={entryProvider} />
                       <span>{resolveProviderLabel(entryProvider)}</span>
                     </span>
                   </h3>
-                  <div className="model-items">{options.map((option) => renderModelOption(option))}</div>
+                  {renderModelItems(options, '', `${headingId}-provider-${entryProvider}`)}
                 </section>
               ))}
             </div>

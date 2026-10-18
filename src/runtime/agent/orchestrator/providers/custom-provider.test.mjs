@@ -239,7 +239,7 @@ test('v2 validation rejects invalid overrides and canonicalizes levels', () => {
   bad({ name: 'x'.repeat(201) });
 });
 
-test('layering: discovery base, overrides by presence, manual append, hidden retained', () => {
+test('layering: discovery overrides, manual allowlist and hidden rows retained', () => {
   const config = normalizeCustomProviderConfig({
     ...base,
     schemaVersion: 2,
@@ -282,12 +282,19 @@ test('layering: discovery base, overrides by presence, manual append, hidden ret
     { id: 'd4', provider: 'p', contextWindow: 5, supportsReasoning: true, reasoningOptions: [] },
     { id: 'd1', provider: 'p', contextWindow: 1 },
   ];
-  const rows = effectiveCustomModelRows(config, discovered, { providerId: 'custom-x' });
+  const autoConfig = {
+    ...config,
+    modelOverrides: Object.fromEntries(Object.entries(config.modelOverrides).filter(([, value]) => !value.manual)),
+  };
+  const rows = effectiveCustomModelRows(autoConfig, discovered, { providerId: 'custom-x' });
   assert.deepEqual(
     rows.map((r) => r.id),
-    ['d1', 'd2', 'd3', 'd4', 'man', 'hid']
+    ['d1', 'd2', 'd3', 'd4']
   );
-  const [d1, d2, d3, d4, man, hid] = rows;
+  const [d1, d2, d3, d4] = rows;
+  const manualRows = effectiveCustomModelRows(config, discovered, { providerId: 'custom-x' });
+  assert.deepEqual(manualRows.map((row) => row.id), ['man', 'hid']);
+  const [man, hid] = manualRows;
   assert.deepEqual(d1, {
     id: 'd1',
     name: 'Renamed',
@@ -339,7 +346,7 @@ test('layering: discovery base, overrides by presence, manual append, hidden ret
   assert.equal(hid.hidden, true);
   assert.equal(hid.manual, true);
   // Without newModelsHidden discovered rows stay visible.
-  const visible = effectiveCustomModelRows({ ...config, discovery: { newModelsHidden: false } }, discovered, {
+  const visible = effectiveCustomModelRows({ ...autoConfig, discovery: { newModelsHidden: false } }, discovered, {
     providerId: 'custom-x',
   });
   assert.equal(visible.find((r) => r.id === 'd4').hidden, false);
@@ -495,18 +502,6 @@ test('openai-chat: path, bearer auth, tool calls, configured models, custom iden
   );
   assert.deepEqual(models, [
     {
-      id: 'extra',
-      name: 'extra',
-      provider: id,
-      contextWindow: 0,
-      outputTokens: null,
-      created: null,
-      hidden: true,
-      manual: false,
-      supportsReasoning: false,
-      customReasoning: { wireFormat: 'standard', wireValues: {}, replay: false },
-    },
-    {
       id: 'm1',
       name: 'Model One',
       provider: id,
@@ -518,8 +513,8 @@ test('openai-chat: path, bearer auth, tool calls, configured models, custom iden
       customReasoning: { wireFormat: 'standard', wireValues: {}, replay: false },
     },
   ]);
-  // Hidden rows stay in metadata; the default stays on the first visible row.
-  assert.equal(p.getCachedModelInfo('extra').hidden, true);
+  // Unselected rows are absent even from metadata; the default stays manual.
+  assert.equal(p.getCachedModelInfo('extra'), null);
   assert.equal(p.defaultModel, 'm1');
   assert.equal(await p.isAvailable(), true);
   assert.equal(providerInputExcludesCache(id), false);
@@ -582,7 +577,7 @@ test('openai-chat: discovery, failure retention, throwOnError and sanitized erro
       });
     }
   );
-  // Manual rows survive a failed discovery without throwing.
+  // Manual rows skip discovery even when the endpoint cannot list models.
   const r = await createCustomProvider('custom-chat-4', {
     ...base,
     schemaVersion: 2,
@@ -591,17 +586,58 @@ test('openai-chat: discovery, failure retention, throwOnError and sanitized erro
     preconnect: false,
     modelOverrides: { man: { manual: true } },
   });
+  let manualRequests = 0;
   await withFetch(
-    () => new Response('down', { status: 503 }),
+    () => {
+      manualRequests += 1;
+      return new Response('down', { status: 503 });
+    },
     async () => {
       assert.deepEqual(
         (await r.listModels()).map((m) => m.id),
         ['man']
       );
-      assert.equal(r.customDiscoveryError.status, 503);
+      assert.equal(r.customDiscoveryError, null);
+      assert.equal(manualRequests, 0);
     }
   );
 });
+
+for (const protocol of ['openai-chat', 'openai-responses', 'anthropic']) {
+  test(`${protocol}: manual ids skip discovery, retain overrides and exclude stale rows`, async () => {
+    const p = await createCustomProvider(`custom-manual-${protocol}`, {
+      ...base, schemaVersion: 2, protocol, apiKey: 'k', preconnect: false,
+      modelOverrides: {
+        'gpt-fixture-1': { manual: true, contextWindow: 9000 },
+        hidden: { manual: true, hidden: true, reasoning: { levels: ['low'] } },
+        stale: { name: 'Not manually selected' },
+      },
+    });
+    p._customDiscovered = [{ id: 'stale', contextWindow: 100 }];
+    let requests = 0;
+    await withFetch(() => {
+      requests += 1;
+      return Response.json({ data: [{ id: 'unwanted' }] });
+    }, async () => {
+      const rows = await p.listModels({ throwOnError: true });
+      assert.deepEqual(rows.map((row) => row.id), ['gpt-fixture-1', 'hidden']);
+      assert.equal(rows[0].contextWindow, 9000);
+      assert.deepEqual(rows[0].reasoningLevels, ['low', 'medium', 'high']);
+      assert.equal(rows[1].hidden, true);
+      assert.deepEqual(rows[1].reasoningLevels, ['low']);
+      assert.equal(p.getCachedModelInfo('stale'), null);
+      assert.equal(requests, 0);
+      const controller = new AbortController();
+      controller.abort(new Error('manual listing cancelled'));
+      await assert.rejects(p.listModels({ signal: controller.signal }), /manual listing cancelled/);
+      p.customConfig = normalizeCustomProviderConfig({
+        ...base, schemaVersion: 2, protocol, modelOverrides: { unwanted: { name: 'Discovered' } },
+      });
+      assert.deepEqual((await p.listModels()).map((row) => row.id), ['unwanted']);
+      assert.equal(requests, 1, 'removing manual ids restores discovery');
+    });
+  });
+}
 
 test('openai-chat: keyless discovery sends no Authorization and honours abort', async () => {
   const p = await createCustomProvider('custom-chat-none', {

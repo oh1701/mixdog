@@ -14,6 +14,7 @@ import { asRecord } from './text-format';
 import { hasSendablePromptContent, shouldBlockPromptSubmit } from './renderer-logic.mjs';
 import { registerSentAttachments, sentAttachmentData } from './attachment-menu';
 import { t } from './i18n';
+import { recognisedSlashSpan } from './slash-commands';
 import { registerImagePreview } from './transcript-metrics';
 import { MAX_SUBMIT_TEXT_LENGTH, type ComposerAttachment } from './composer-support';
 import {
@@ -216,21 +217,22 @@ export function useComposerSubmission({
       const submittedDraft = textarea.current?.value ?? draftRef.current;
       const submittedAttachments = [...attachmentsRef.current];
       const text = (slashOverride || submittedDraft).trim();
+      const slashCommand = recognisedSlashSpan(text) !== null;
       // Pins and picks from the session's visualize panel ride along with a
       // message (never with a slash command), and alone make one sendable.
-      const feedback = visualizeFeedbackFor(text.startsWith('/') ? undefined : sessionId);
+      const feedback = visualizeFeedbackFor(slashCommand ? undefined : sessionId);
       const hasFeedback = visualizeFeedbackPending(feedback);
       // Draft materialization and slash commands own the submit indicator;
       // only slash commands still serialize. Blocking a draft's follow-up here
       // just dropped it — the submit router joins the session the first submit
       // is minting instead of creating a second one.
-      const showsSubmitProgress = Boolean(draftMode || text.startsWith('/'));
+      const showsSubmitProgress = Boolean(draftMode || slashCommand);
       if (
         (!hasFeedback && !hasSendablePromptContent({ text, attachments: submittedAttachments })) ||
         transitioningRef.current ||
         shouldBlockPromptSubmit({
           submitting: submittingRef.current,
-          slashCommand: text.startsWith('/'),
+          slashCommand,
         })
       )
         return;
@@ -250,7 +252,7 @@ export function useComposerSubmission({
       }
       try {
         clearNotice();
-        if (text.startsWith('/')) {
+        if (slashCommand) {
           if (commandBusy) {
             setAttachmentError('Wait for the current command to finish. Your command is still in the editor.');
             return;

@@ -514,6 +514,46 @@
 .model-catalog-panel .model-items {
   gap: 1px;
 }
+/* Options and their favorite stars are parallel columns of equal-height
+   rows: a button may not nest inside an option, nor sit in a listbox. */
+.model-catalog-panel .model-items {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 2px;
+}
+.model-catalog-panel .model-options,
+.model-catalog-panel .model-favorite-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.model-catalog-panel .model-favorite-toggle {
+  box-sizing: border-box;
+  width: 28px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: var(--mx-radius-md);
+  color: var(--mx-text-muted);
+  background: transparent;
+}
+.model-catalog-panel .model-favorite-toggle:hover,
+.model-catalog-panel .model-favorite-toggle:focus-visible {
+  outline: 0;
+  color: var(--mx-text);
+  background: var(--mx-hover);
+}
+.model-catalog-panel .model-favorite-toggle:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--mx-border-strong);
+}
+.model-catalog-panel .model-favorite-toggle[data-favorite="true"] {
+  color: var(--mx-warning);
+}
 .model-catalog-panel .model-group h3 {
   min-height: 28px;
   padding: 0 8px;
@@ -527,6 +567,7 @@
   background: var(--mx-bg-layer-1);
 }
 .model-catalog-panel .model-option-row {
+  height: 32px;
   min-height: 32px;
   padding: 5px 8px;
   border-radius: var(--mx-radius-md);

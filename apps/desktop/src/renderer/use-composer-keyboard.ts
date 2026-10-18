@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type KeyboardEvent, type RefObject, type SetStateAction } from 'react';
+import { useCallback, useRef, type Dispatch, type KeyboardEvent, type RefObject, type SetStateAction } from 'react';
 import type { DesktopRendererComposerActionDiagnostic } from '../shared/contract';
 import { isComposerNewlineChord, shouldInterruptPrompt, shouldNavigatePromptHistory } from './renderer-logic.mjs';
 import { foldAttachmentTokens } from './composer-attachment-restore';
@@ -118,6 +118,12 @@ export function useComposerKeyboard({
     clearAttachments(): void;
   };
 }) {
+  // A suggested command is not consent to replace a literal slash or path.
+  // Only arrow navigation explicitly selects a candidate for Enter.
+  const slashNavigation = useRef({ draft: draft.value, selected: false });
+  if (slashNavigation.current.draft !== draft.value) {
+    slashNavigation.current = { draft: draft.value, selected: false };
+  }
   const insertNewline = useCallback(
     (element: HTMLTextAreaElement) => {
       const start = element.selectionStart;
@@ -213,12 +219,14 @@ export function useComposerKeyboard({
         event.preventDefault();
         event.stopPropagation();
         slash.setDismissed(draft.value);
+        slashNavigation.current.selected = false;
         runtime.escapeClearAt.current = 0;
         return true;
       }
       const command = slash.commands[slash.index] || slash.commands[0];
       if (!command) return false;
       if (event.key === 'Enter') {
+        if (!slashNavigation.current.selected) return false;
         event.preventDefault();
         void actions.send(command.usage, 'keyboard-enter');
         return true;
@@ -238,6 +246,7 @@ export function useComposerKeyboard({
         paletteOwnsPromptVerticalArrow(slash.commands.length)
       ) {
         event.preventDefault();
+        slashNavigation.current.selected = true;
         const direction = event.key === 'ArrowDown' ? 1 : -1;
         slash.setIndex((index) => (index + direction + slash.commands.length) % slash.commands.length);
         return true;

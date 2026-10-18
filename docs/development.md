@@ -88,6 +88,24 @@ benchmarks/     reproducible benchmark harnesses, results, and raw artifacts
 src/vendor/     vendored runtime components
 ```
 
+## Models and composer commands
+
+For a custom provider, leave the manual model list empty to discover models
+automatically. Adding manual model IDs restricts the catalog to those IDs and
+skips automatic discovery. Per-model visibility and reasoning overrides still
+apply; removing all manual IDs enables discovery again.
+
+In the desktop `/model` picker, use the star beside a model to add or remove it
+from **Favorites**, above **Recent** and the provider groups. Favorites are saved
+on this device, separately for each provider and model, and follow the picker’s
+search filter. Disconnected models disappear from the section until available
+again without losing their saved favorite.
+
+The desktop composer executes recognized slash commands such as `/model`.
+Other leading-slash text, including absolute paths, is sent as ordinary text.
+An untouched autocomplete suggestion must not replace that text on Enter;
+choose a suggestion explicitly with the palette controls when wanted.
+
 ## macOS signing and notarization
 
 Release builds sign the macOS app with a Developer ID certificate and notarize

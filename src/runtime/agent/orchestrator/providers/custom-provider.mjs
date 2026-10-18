@@ -8,6 +8,7 @@ import { resolveProviderApiKey } from '../../../shared/provider-api-key.mjs';
 import {
   CUSTOM_PROTOCOL_WIRES,
   effectiveCustomModelRows,
+  manualCustomModelIds,
   normalizeCustomProviderConfig,
 } from './custom-provider-config.mjs';
 import {
@@ -29,6 +30,7 @@ export {
   assertCustomReasoningPatch,
   canonicalReasoningLevel,
   effectiveCustomModelRows,
+  manualCustomModelIds,
   normalizeCustomProviderConfig,
 } from './custom-provider-config.mjs';
 
@@ -43,16 +45,33 @@ function sanitizeDiscoveryError(error, apiKey) {
   return out;
 }
 
-// Discovery always runs; overrides layer on top. A failed discovery keeps the
-// last successful discovered rows plus manual rows, and throws only when
-// nothing is usable or the caller asks (`throwOnError`). The sanitized error
-// of the latest attempt is kept in `customDiscoveryError` (null on success).
+// Catalog metadata for manually configured ids, without any endpoint request:
+// the same `enrichModels` fill discovery applies to listed rows, over `{ id }`
+// rows only, so a manual id keeps the catalog limits/reasoning it would have
+// had when discovered. Absent catalog entries come back unchanged.
+async function enrichManualRows(providerId, ids) {
+  if (!ids.length) return [];
+  return enrichModels(ids.map((id) => ({ id, name: id, provider: providerId })));
+}
+
+// Discovery runs for a provider without manual models; overrides layer on top.
+// A failed discovery keeps the last successful discovered rows plus manual
+// rows, and throws only when nothing is usable or the caller asks
+// (`throwOnError`). The sanitized error of the latest attempt is kept in
+// `customDiscoveryError` (null on success).
+//
+// With one or more `manual: true` overrides the provider lists only those ids
+// and makes no discovery request at all (the "leave empty to discover models
+// automatically" promise), so an endpoint without /models keeps working.
 function withCustomModels(Base, discover) {
   return class extends Base {
     customConfig = null;
     customDiscoveryError = null;
     _customDiscovered = null;
     _customKeyless = false;
+    _customManualOnly() {
+      return manualCustomModelIds(this.customConfig).length > 0;
+    }
     // The key for discovery and error redaction, resolved per use like sends.
     _customKey() {
       return this._customKeyless ? '' : resolveProviderApiKey(this.name, this.config);
@@ -76,6 +95,19 @@ function withCustomModels(Base, discover) {
     _customRows() {
       return effectiveCustomModelRows(this.customConfig, this._customDiscovered || [], { providerId: this.name });
     }
+    // Manual listing: the configured ids are the whole list. No discovery
+    // request is made, so an endpoint without /models still lists them; the
+    // local catalogs supply whatever metadata they know about those ids.
+    async _listManualModels() {
+      this._assertCustomKey();
+      // Discovered rows from an earlier mode never leak into a manual list.
+      this._customDiscovered = null;
+      const enriched = await enrichManualRows(this.name, manualCustomModelIds(this.customConfig));
+      const rows = effectiveCustomModelRows(this.customConfig, enriched, { providerId: this.name });
+      this._applyCustomRows(rows);
+      this.customDiscoveryError = null;
+      return rows.map((row) => structuredClone(row));
+    }
     _applyCustomRows(rows) {
       this._enrichedModels = rows;
       if (rows.some((row) => row.id === this.defaultModel && !row.hidden)) return;
@@ -83,6 +115,8 @@ function withCustomModels(Base, discover) {
       if (first) this.defaultModel = first.id;
     }
     async listModels({ signal = null, throwOnError = false } = {}) {
+      signal?.throwIfAborted();
+      if (this._customManualOnly()) return this._listManualModels();
       let failure = null;
       try {
         this._assertCustomKey();
