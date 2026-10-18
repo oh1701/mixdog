@@ -108,14 +108,23 @@ test('a hidden custom model leaves the quick picker, a saved route on it include
   assert.equal(meta.hidden, true);
 });
 
-test('saved routes on uncached custom models get the effective overrides (hidden excluded, declarations kept)', () => {
+test('saved routes on uncached custom models get effective overrides in automatic mode (hidden excluded, declarations kept)', () => {
   // Overrides on discovered (non-manual) ids that are not in the catalog cache:
   // only the saved routes name them. Real normalizer, no mocks.
   const config = {
-    ...v2Config({
-      'vendor/discovered-hidden': { hidden: true, reasoning: { levels: [] } },
-      'vendor/discovered-tuned': { name: 'Tuned', maxOutputTokens: 4321, reasoning: { levels: ['low'], replay: true } },
-    }),
+    providers: {
+      [V2_ID]: {
+        ...v2Config().providers[V2_ID],
+        modelOverrides: {
+          'vendor/discovered-hidden': { hidden: true, reasoning: { levels: [] } },
+          'vendor/discovered-tuned': {
+            name: 'Tuned',
+            maxOutputTokens: 4321,
+            reasoning: { levels: ['low'], replay: true },
+          },
+        },
+      },
+    },
     presets: [{ provider: V2_ID, model: 'vendor/discovered-tuned' }],
   };
   const { rows, modelMetaByRoute } = quickRows(config, { provider: V2_ID, model: 'vendor/discovered-hidden' });
@@ -133,6 +142,17 @@ test('saved routes on uncached custom models get the effective overrides (hidden
   assert.deepEqual(customEffortLevels(tuned), ['low']);
   assert.equal(tuned.customReasoning.replay, true);
   assert.equal(tuned.reasoningContentField, 'reasoning_content');
+});
+
+test('saved routes cannot reintroduce models outside a manual custom allowlist', () => {
+  const config = {
+    ...v2Config({ 'vendor/not-selected': { name: 'Not selected', reasoning: { levels: ['low'] } } }),
+    presets: [{ provider: V2_ID, model: 'vendor/not-selected' }],
+    workflowRoutes: { review: { provider: V2_ID, model: 'vendor/workflow-only' } },
+    agents: { worker: { provider: V2_ID, model: 'vendor/agent-only' } },
+  };
+  const { rows } = quickRows(config, { provider: V2_ID, model: 'vendor/current-only' });
+  assert.deepEqual(rows.map((row) => row.id).sort(), ['vendor/plain', 'vendor/visible']);
 });
 
 test('a custom provider whose stored config is invalid lists nothing, saved routes on it included', () => {
