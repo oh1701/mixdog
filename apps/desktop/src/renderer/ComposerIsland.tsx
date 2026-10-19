@@ -23,6 +23,7 @@ import {
   type IslandAgentRow,
 } from './agent-activity-model';
 import {
+  activeShellJobCount,
   backgroundJobRows,
   EMPTY_SHELL_ROW_RETENTION,
   expiredShellRows,
@@ -759,12 +760,14 @@ function AgentsPanel({
 function ShellsPanel({
   sessionId,
   shells,
+  runningCount,
   onClose,
   onDismiss,
   onDismissAll,
 }: {
   sessionId: string;
   shells: JobRow[];
+  runningCount: number;
   onClose(): void;
   /** Hides a finished shell row for good. */
   onDismiss(row: JobRow): void;
@@ -773,13 +776,12 @@ function ShellsPanel({
 }) {
   const clock = useClock(true);
   const { stopOf, stop } = useShellStops(sessionId);
-  const runningShells = shells.filter((row) => !row.finished).length;
   const finished = shells.filter((row) => row.finished);
   return (
     <section className="composer-island-panel" aria-label={t('Background tasks')}>
       <JobsPanelHead
-        mark={jobsTabMark('shell', [], runningShells)}
-        title={runningShells > 0 ? t('Shell {{shell}}', { shell: runningShells }) : t('Shell')}
+        mark={jobsTabMark('shell', [], runningCount)}
+        title={runningCount > 0 ? t('Shell {{shell}}', { shell: runningCount }) : t('Shell')}
         meta={finished.length > 0 ? <span>{t('Island: Ended {{count}}', { count: finished.length })}</span> : undefined}
         action={
           finished.length > 0 ? (
@@ -912,21 +914,21 @@ function AgentsSegment({
 }
 
 /** The pill's shell segment counts running shells only. With only finished
- *  shells left (not yet dismissed) it reads "Shell", muted and without a
- *  number; with none it is gone. */
+ *  shells or safety holds left it reads "Shell", muted and without a number;
+ *  with none it is gone. */
 function ShellsSegment({
   runningCount,
-  finishedCount,
+  totalCount,
   expanded,
   onClick,
 }: {
   runningCount: number;
-  finishedCount: number;
+  totalCount: number;
   expanded: boolean;
   onClick(): void;
 }) {
   const live = runningCount > 0;
-  if (!live && finishedCount === 0) return null;
+  if (!live && totalCount === 0) return null;
   return (
     <button
       type="button"
@@ -1089,11 +1091,12 @@ export const ComposerIsland = memo(function ComposerIsland({
   const agentRows = useIslandAgentRows(sessionId);
   const shellRows = jobRows.filter((row) => !row.finished);
   const finishedShellCount = jobRows.filter((row) => row.finished).length;
-  const shellCount = Math.max(Number(snapshot.shellJobs?.count) || 0, shellRows.length);
-  // Finished shells keep the shells panel open-able until dismissed.
-  const shellTotal = shellCount + finishedShellCount;
-  // No branch or worktree switch while anything of the session still works.
-  const locked = workBusy || shellCount > 0 || agentRows.some((row) => !row.finished);
+  const shellCount = activeShellJobCount(snapshot.shellJobs, jobRows);
+  // Finished shells and safety holds keep the shells panel open-able.
+  const shellTotal = Math.max(shellCount, shellRows.length) + finishedShellCount;
+  // Safety holds still protect the branch/worktree even though they are not
+  // confirmed running work.
+  const locked = workBusy || shellCount > 0 || shellRows.length > 0 || agentRows.some((row) => !row.finished);
   const [expanded, setExpanded] = useState<ComposerIslandTab>('');
   const toggle = (tab: 'agents' | 'shells') => setExpanded(expanded === tab ? '' : tab);
   const agentSessionIds = useMemo(() => agentRows.map(({ node }) => node.sessionId).filter(Boolean), [agentRows]);
@@ -1204,7 +1207,7 @@ export const ComposerIsland = memo(function ComposerIsland({
               )}
               <ShellsSegment
                 runningCount={shellCount}
-                finishedCount={finishedShellCount}
+                totalCount={shellTotal}
                 expanded={expanded === 'shells'}
                 onClick={() => toggle('shells')}
               />
@@ -1220,6 +1223,7 @@ export const ComposerIsland = memo(function ComposerIsland({
               <ShellsPanel
                 sessionId={sessionId}
                 shells={jobRows}
+                runningCount={shellCount}
                 onClose={() => setExpanded('')}
                 onDismiss={(row) => dismissShellJobs(sessionId, [row.key])}
                 onDismissAll={(rows) =>

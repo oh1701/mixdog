@@ -18,7 +18,7 @@ import {
   treeKillForceSettle,
 } from './lib/shell-run-state.mjs';
 import { spawnShellChild } from './lib/shell-run-spawn.mjs';
-import { createPromotedCaptureRelease, createSettle } from './lib/shell-run-settle.mjs';
+import { attachChildExit, createPromotedCaptureRelease, createSettle } from './lib/shell-run-settle.mjs';
 import { _abortReasonIsInterrupt, createAutoBackground } from './lib/shell-run-background.mjs';
 
 export {
@@ -388,37 +388,6 @@ function attachOutputCapture(run) {
   });
 }
 
-function attachChildExit(run, releasePromotedCapture) {
-  const { child } = run;
-  // Settle on 'close', not 'exit'. 'exit' fires when the child terminates but
-  // stdout/stderr streams may still be flushing buffered bytes; settling
-  // there can lose the tail of the output. 'close' fires after stdio is fully
-  // drained, so getStdout()/getStderr() see the complete capture.
-  child.once('close', (code, signal) => run.settle(code, signal));
-  if (run.pendingChildError) run.settle(1, null);
-  // 'close' only fires after stdio drains; a forked grandchild that
-  // inherited stdout/stderr fds can hold them open past direct-child
-  // exit and stall settle() until timeoutMs. 'exit' fires on direct
-  // child termination regardless — give 'close' a 3 s grace then
-  // settle anyway. The grace outlives the spawn server's own 2 s drain
-  // deadline, so the real exit status normally still arrives first.
-  child.once('exit', (code, signal) => {
-    if (!run.rootExitAtMs) run.rootExitAtMs = Date.now();
-    const grace = setTimeout(() => {
-      if (run.settled) return;
-      if (run.autoBackgrounded) {
-        // A promoted child whose 'close' never arrives (grandchild holding
-        // the stdio) would otherwise keep its spill descriptors forever:
-        // 'exit' is the only terminal event this path gets.
-        releasePromotedCapture();
-        return;
-      }
-      run.partialOutput = true;
-      run.settle(code == null ? 1 : code, signal);
-    }, 3000);
-    if (grace.unref) grace.unref();
-  });
-}
 
 // Live-progress heartbeat: every 2 s while the foreground command runs, emit
 // "running Ns" so the MCP client renders live progress instead of an opaque

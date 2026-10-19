@@ -19,6 +19,7 @@ const [
   { pendingSessionDiffFileRequest },
   { t: translate },
   { parseIslandGitRequestText },
+  { ComposerIsland },
 ] = await Promise.all([
   import('./ComposerDock.tsx'),
   import('./WorktreeIslandSegment.tsx'),
@@ -27,6 +28,7 @@ const [
   import('./session-diff-focus.ts'),
   import('./i18n.ts'),
   import('./island-git-request.ts'),
+  import('./ComposerIsland.tsx'),
 ]);
 
 function mount(t) {
@@ -568,55 +570,120 @@ test('queued follow-up rows read icon, text, then Steer now, trash and a menu wh
   assert.equal(document.querySelector('.row-overflow-menu'), null, 'the menu closes after Edit');
 });
 
-test('a shell whose termination is unconfirmed reads so and is released only after confirmation', async (t) => {
-  const { root, document, window } = mount(t);
-  const releases = [];
-  const stops = [];
-  window.mixdogDesktop.releaseShellJob = async (...args) => {
-    releases.push(args);
-    return { released: true };
-  };
-  window.mixdogDesktop.stopShellJob = async (...args) => {
-    stops.push(args);
-    return { stopped: true };
-  };
-  let confirmAnswer = false;
-  const prompts = [];
-  window.confirm = (message) => {
-    prompts.push(message);
-    return confirmAnswer;
-  };
-  await publish({
-    shellJobs: {
-      count: 1,
-      jobs: [
-        {
-          taskId: 'job_held',
-          command: 'node server.js',
-          cwd: '/work/cart-service',
-          startedAt: Date.now() - 5_000,
-          terminationUnconfirmed: true,
-        },
-      ],
-    },
+for (const count of [0, 1]) {
+  test(`a held shell with count ${count} stays idle and is released only after confirmation`, async (t) => {
+    const { root, document, window } = mount(t);
+    const releases = [];
+    const stops = [];
+    window.mixdogDesktop.releaseShellJob = async (...args) => {
+      releases.push(args);
+      return { released: true };
+    };
+    window.mixdogDesktop.stopShellJob = async (...args) => {
+      stops.push(args);
+      return { stopped: true };
+    };
+    let confirmAnswer = false;
+    const prompts = [];
+    window.confirm = (message) => {
+      prompts.push(message);
+      return confirmAnswer;
+    };
+    await publish({
+      shellJobs: {
+        count,
+        jobs: [
+          {
+            taskId: 'job_held',
+            command: 'node server.js',
+            cwd: '/work/cart-service',
+            startedAt: Date.now() - 5_000,
+            terminationUnconfirmed: true,
+          },
+        ],
+      },
+    });
+    await act(async () => root.render(React.createElement(ComposerDock, dockProps())));
+    const segment = document.querySelector('.composer-island-seg-shell');
+    assert.equal(segment.textContent, translate('Shell'));
+    assert.equal(segment.querySelector('.composer-island-seg-num'), null);
+    assert.equal(segment.querySelector('.composer-island-pulse'), null);
+    await act(async () => document.querySelector('.composer-island-seg-shell').click());
+    assert.equal(document.querySelector('.composer-island-phead .composer-island-pulse'), null);
+    assert.equal(document.querySelector('.composer-island-tab').textContent, translate('Shell'));
+    const status = document.querySelector('.composer-island-row .agent-activity-elapsed');
+    assert.equal(status.dataset.state, 'unconfirmed');
+    assert.equal(status.textContent, translate('Termination unconfirmed'));
+    const button = document.querySelector('.composer-island-row button');
+    assert.equal(button.textContent, translate('Release anyway'));
+    // Declining the confirmation releases nothing.
+    await act(async () => button.click());
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0], /node server\.js/);
+    assert.deepEqual(releases, []);
+    confirmAnswer = true;
+    await act(async () => document.querySelector('.composer-island-row button').click());
+    assert.deepEqual(releases, [['island-session', 'job_held']]);
+    assert.deepEqual(stops, [], 'a held shell is released, never re-stopped');
+    assert.equal(document.querySelector('.composer-island-row button').textContent, translate('Releasing…'));
   });
+}
+
+test('count-only shells count, while mixed shells settling to held-only stop pulsing without hiding warnings', async (t) => {
+  const { root, document, publishPool } = mount(t);
+  const held = { taskId: 'held-mixed', command: 'held command', terminationUnconfirmed: true };
+  const running = { taskId: 'running-mixed', command: 'running command' };
+  await publish({ shellJobs: { count: 2, jobs: [] } });
   await act(async () => root.render(React.createElement(ComposerDock, dockProps())));
-  await act(async () => document.querySelector('.composer-island-seg-shell').click());
-  const status = document.querySelector('.composer-island-row .agent-activity-elapsed');
-  assert.equal(status.dataset.state, 'unconfirmed');
-  assert.equal(status.textContent, translate('Termination unconfirmed'));
-  const button = document.querySelector('.composer-island-row button');
-  assert.equal(button.textContent, translate('Release anyway'));
-  // Declining the confirmation releases nothing.
-  await act(async () => button.click());
-  assert.equal(prompts.length, 1);
-  assert.match(prompts[0], /node server\.js/);
-  assert.deepEqual(releases, []);
-  confirmAnswer = true;
-  await act(async () => document.querySelector('.composer-island-row button').click());
-  assert.deepEqual(releases, [['island-session', 'job_held']]);
-  assert.deepEqual(stops, [], 'a held shell is released, never re-stopped');
-  assert.equal(document.querySelector('.composer-island-row button').textContent, translate('Releasing…'));
+  const segment = () => document.querySelector('.composer-island-seg-shell');
+  assert.equal(segment().textContent, translate('Island: {{count}} shells', { count: 2 }));
+  assert.ok(segment().querySelector('.composer-island-pulse'));
+  await act(async () => segment().click());
+  const header = () => document.querySelector('.composer-island-phead');
+  assert.equal(header().querySelector('.composer-island-tab').textContent, translate('Shell {{shell}}', { shell: 2 }));
+  assert.ok(header().querySelector('.composer-island-pulse'));
+  await publish({ shellJobs: { count: 2, jobs: [held, running] } });
+  await act(() => sleep(40));
+  assert.equal(segment().textContent, translate('Island: {{count}} shells', { count: 1 }));
+  await publish({ shellJobs: { count: 1, jobs: [held, running] } });
+  assert.equal(segment().textContent, translate('Island: {{count}} shells', { count: 1 }));
+  assert.equal(header().querySelector('.composer-island-tab').textContent, translate('Shell {{shell}}', { shell: 1 }));
+  assert.ok(header().querySelector('.composer-island-pulse'));
+  await publish({
+    shellJobs: { count: 2, jobs: [held, { ...running, terminationUnconfirmed: true }] },
+  });
+  assert.equal(document.querySelector('.composer-island-slot').dataset.mode, 'panel');
+  assert.equal(header().querySelector('.composer-island-tab').textContent, translate('Shell'));
+  assert.equal(header().querySelector('.composer-island-pulse'), null);
+  assert.equal(segment().textContent, translate('Shell'));
+  assert.equal(segment().querySelector('.composer-island-pulse'), null);
+  const rows = [...document.querySelectorAll('.composer-island-row')];
+  assert.equal(rows.length, 2);
+  for (const row of rows) {
+    assert.equal(row.querySelector('.agent-activity-elapsed').textContent, translate('Termination unconfirmed'));
+    assert.equal(row.querySelector('button').textContent, translate('Release anyway'));
+  }
+  await publishPool([poolAgent('still-running')]);
+  assert.ok(document.querySelector('.composer-island-seg-agents .composer-island-pulse'));
+  assert.equal(segment().querySelector('.composer-island-pulse'), null);
+});
+
+test('held-only shells protect branch and worktree switches without showing running activity', async (t) => {
+  const { root, document } = mount(t);
+  await publish({
+    shellJobs: { count: 0, jobs: [{ taskId: 'foreign-branch-hold', terminationUnconfirmed: true }] },
+  });
+  await act(async () =>
+    root.render(
+      React.createElement(ComposerIsland, {
+        sessionId: 'island-session',
+        branch: (locked) => React.createElement('button', { id: 'branch-switch', disabled: locked }, 'Switch branch/worktree'),
+      })
+    )
+  );
+  assert.equal(document.querySelector('#branch-switch').disabled, true);
+  assert.equal(document.querySelector('.composer-island-seg-shell').textContent, translate('Shell'));
+  assert.equal(document.querySelector('.composer-island-pulse'), null);
 });
 
 test('Stop calls stopShellJob once; a refused stop keeps the row running with a retry', async (t) => {

@@ -38,6 +38,54 @@ test('latest completion waits on background work, then returns to completed in p
 test('backgroundWorkCounts reads shell jobs and running agents', () => {
   assert.equal(backgroundWorkCounts({ shellJobs: { count: 0, jobs: [] } }), undefined);
   assert.deepEqual(backgroundWorkCounts({ shellJobs: { count: 2, jobs: [] } }), { shell: 2, agent: 0 });
+  const held = { taskId: 'foreign-held', terminationUnconfirmed: true };
+  assert.equal(backgroundWorkCounts({ shellJobs: { count: 0, jobs: [held] } }), undefined);
+  assert.equal(backgroundWorkCounts({ shellJobs: { count: 1, jobs: [held] } }), undefined);
+  assert.deepEqual(backgroundWorkCounts({ shellJobs: { count: 2, jobs: [held, { taskId: 'running' }] } }), {
+    shell: 1,
+    agent: 0,
+  });
+  assert.deepEqual(
+    backgroundWorkCounts({
+      shellJobs: { count: 0, jobs: [held] },
+      agentJobs: [{ taskId: 'agent-running', status: 'running' }],
+    }),
+    { shell: 0, agent: 1 }
+  );
+});
+
+test('completed sibling session ignores held shells and settles mixed work to completed in place', async (t) => {
+  const { root, document } = installTestDom(t, { rootId: 'root', globals: { React } });
+  const store = createSessionLaneStore();
+  t.after(() => store.clear());
+  const sessionId = 'completed-figma';
+  const held = { taskId: 'foreign-held', terminationUnconfirmed: true };
+  const publish = (shellJobs) =>
+    act(async () => {
+      store.apply({ sessionId, snapshot: { ...EMPTY_SNAPSHOT, sessionId, items: [item], shellJobs } });
+    });
+  function Completion() {
+    const lane = useSessionLane(sessionId, store, desktopHeaderSnapshotsEqual);
+    return React.createElement(CompletionStatus, { item, backgroundWork: backgroundWorkCounts(lane) });
+  }
+  const status = () => document.querySelector('.turn-status');
+  const assertCompleted = () => {
+    assert.equal(status().textContent, 'Work complete in 12s');
+    assert.equal(status().classList.contains('waiting'), false);
+    assert.equal(status().querySelector('.turn-status-dots'), null);
+  };
+  await publish({ count: 0, jobs: [held] });
+  await act(async () => root.render(React.createElement(Completion)));
+  assertCompleted();
+  const row = status();
+  await publish({ count: 1, jobs: [held] });
+  assertCompleted();
+  await publish({ count: 3, jobs: [held, { taskId: 'running-1' }, { taskId: 'running-2' }] });
+  assert.equal(status().textContent, 'Waiting on 2 shell jobs');
+  assert.ok(status().querySelector('.turn-status-dots'));
+  await publish({ count: 1, jobs: [held] });
+  assertCompleted();
+  assert.equal(status(), row, 'completion settles without remounting its status row');
 });
 
 test('background subscribers update independently and a later completion still reaches the mounted row', async (t) => {

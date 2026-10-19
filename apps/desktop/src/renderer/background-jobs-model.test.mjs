@@ -13,6 +13,7 @@ test('confirmText collapses newlines and truncates long commands to one ~100-cha
   assert.equal(confirmText('short'), 'short');
 });
 import {
+  activeShellJobCount,
   backgroundJobRows,
   cwdFolderName,
   expiredShellRows,
@@ -46,6 +47,30 @@ const snapshot = {
   },
 };
 
+test('active shell count excludes owner and shared holds while preserving missing-row counts', () => {
+  const held = { taskId: 'held', terminationUnconfirmed: true };
+  const running = { taskId: 'running' };
+  for (const [shellJobs, expected] of [
+    [undefined, 0],
+    [{ count: 0, jobs: [held] }, 0],
+    [{ count: 1, jobs: [held] }, 0],
+    [{ count: 2, jobs: [held, running] }, 1],
+    [{ count: 1, jobs: [held, running] }, 1],
+    [{ jobs: [held, running] }, 1],
+    [{ count: 2, jobs: [held, { ...held, taskId: 'held-2' }] }, 0],
+    [{ count: 2, jobs: [] }, 2],
+    [{ count: 2 }, 2],
+    [{ count: 2, jobs: [running] }, 2],
+    [{ count: 3, jobs: [held, running] }, 2],
+    [{ count: 0, jobs: [running] }, 1],
+    [{ count: 0, finished: [{ taskId: 'done', exitCode: 0 }] }, 0],
+  ]) {
+    assert.equal(activeShellJobCount(shellJobs), expected, JSON.stringify(shellJobs));
+  }
+  assert.equal(activeShellJobCount(undefined, [{ finished: true }, held, running]), 1);
+  assert.equal(activeShellJobCount({ count: 0, jobs: [] }, [running]), 1, 'retained running rows still count');
+});
+
 test('finished shell rows follow running ones, newest finish first, with exit info', () => {
   const rows = backgroundJobRows(snapshot);
   assert.deepEqual(
@@ -67,6 +92,18 @@ test('shell row action follows the stop state; finished rows only dismiss', () =
   assert.equal(shellRowAction(running, 'stopping'), 'stopping');
   assert.equal(shellRowAction(running, 'failed'), 'retry');
   assert.equal(shellRowAction({ finished: true }, 'stopping'), 'dismiss');
+});
+
+test('shared held shells remain visible and offer release rather than stop or dismiss', () => {
+  const [row] = backgroundJobRows(
+    { shellJobs: { count: 0, jobs: [{ taskId: 'foreign-held', terminationUnconfirmed: true }] } },
+    new Set(['shell:foreign-held'])
+  );
+  assert.equal(row.taskId, 'foreign-held');
+  assert.equal(row.terminationUnconfirmed, true);
+  assert.equal(row.finished, undefined);
+  assert.equal(shellRowAction(row, undefined), 'release');
+  assert.deepEqual(expiredShellRows([row], 100_000, () => 0), { keys: [], nextAt: 0 });
 });
 
 test('finished shell labels: exit 0 reads Exited, a stop Stopped, anything else Failed', () => {

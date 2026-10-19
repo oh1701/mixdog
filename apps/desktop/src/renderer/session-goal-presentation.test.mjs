@@ -84,6 +84,17 @@ test('background shell execution stays visible without resuming a paused Goal', 
     assert.match(host.textContent, /0:12/);
     await render({ jobs: [{ taskId: 'running-shell' }] }, { id: 'other-approval' });
     assert.equal(activity(), t('Responding'));
+    const held = { taskId: 'foreign-held', terminationUnconfirmed: true };
+    await render({ count: 0, jobs: [held] });
+    assert.equal(activity(), t('Paused'), 'a shared safety hold is not executing');
+    await render({ count: 1, jobs: [held] });
+    assert.equal(activity(), t('Paused'), 'an owner safety hold is not executing either');
+    await render({ count: 2, jobs: [held, { taskId: 'running-shell' }] });
+    assert.equal(activity(), t('Responding'), 'normal shells still execute alongside a hold');
+    await render({ count: 2, jobs: [held, { taskId: 'running-shell', terminationUnconfirmed: true }] });
+    assert.equal(activity(), t('Paused'), 'mixed work settling to holds restores the paused state');
+    await render({ count: 2, jobs: [] });
+    assert.equal(activity(), t('Responding'), 'count-only execution remains supported');
     await render({ count: 1 }, { id: 'other-approval' }, { ...goal, status: 'active' });
     assert.equal(activity(), t('Goal state: In progress'));
     await render({ count: 0, jobs: [] });
@@ -204,6 +215,14 @@ test('task progress is five fixed cells: the finished share, then the work in ha
 
 test('active child work remains visible while a separate approval is waiting', () => {
   assert.equal(goalDisplayStatus({ status: 'paused' }, { busy: false }, true), 'responding');
+  assert.equal(
+    goalDisplayStatus(
+      { status: 'paused' },
+      { shellJobs: { count: 0, jobs: [{ taskId: 'foreign-held', terminationUnconfirmed: true }] } },
+      true
+    ),
+    'responding'
+  );
   assert.equal(goalDisplayStatus({ status: 'active' }, { busy: true, toolApproval: { id: 'approval' } }), 'paused');
   assert.equal(
     goalDisplayStatus({ status: 'active' }, { busy: true, toolApproval: { id: 'approval' } }, true),

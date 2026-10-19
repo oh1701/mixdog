@@ -26,6 +26,52 @@ import {
 // it follows confirmed termination only (see below).
 const UNCONFIRMED_KILL_CLEANUP_CEILING_MS = 60_000;
 
+export function attachChildExit(run, releasePromotedCapture) {
+  const { child } = run;
+  let closed = null;
+  let drainExpired = null;
+  // Promotion temporarily suppresses settlement. Replay only a lifecycle
+  // boundary already reached, otherwise the existing close/grace owns it.
+  run.resumeExitSettlement = () => {
+    if (closed) return run.settle(...closed);
+    if (drainExpired) {
+      run.partialOutput = true;
+      return run.settle(...drainExpired);
+    }
+  };
+  // Settle on 'close', not 'exit'. 'exit' fires when the child terminates but
+  // stdout/stderr streams may still be flushing buffered bytes; settling
+  // there can lose the tail of the output. 'close' fires after stdio is fully
+  // drained, so getStdout()/getStderr() see the complete capture.
+  child.once('close', (code, signal) => {
+    closed = [code, signal];
+    return run.resumeExitSettlement();
+  });
+  if (run.pendingChildError) run.settle(1, null);
+  // 'close' only fires after stdio drains; a forked grandchild that
+  // inherited stdout/stderr fds can hold them open past direct-child
+  // exit and stall settle() until timeoutMs. 'exit' fires on direct
+  // child termination regardless — give 'close' a 3 s grace then
+  // settle anyway. The grace outlives the spawn server's own 2 s drain
+  // deadline, so the real exit status normally still arrives first.
+  child.once('exit', (code, signal) => {
+    if (!run.rootExitAtMs) run.rootExitAtMs = Date.now();
+    const grace = setTimeout(() => {
+      if (run.settled) return;
+      drainExpired = [code == null ? 1 : code, signal];
+      if (run.autoBackgrounded) {
+        // A promoted child whose 'close' never arrives (grandchild holding
+        // the stdio) would otherwise keep its spill descriptors forever:
+        // 'exit' is the only terminal event this path gets.
+        releasePromotedCapture();
+        return;
+      }
+      run.resumeExitSettlement();
+    }, 3000);
+    if (grace.unref) grace.unref();
+  });
+}
+
 /** Lifecycle completion of a run whose result is already reported: release
  *  `run.workspaceAdmission` and retire the live record only once the root AND
  *  every descendant identity captured before the kill are confirmed gone. One

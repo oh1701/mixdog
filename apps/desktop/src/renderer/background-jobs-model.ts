@@ -26,6 +26,18 @@ export type JobRow = {
   terminationUnconfirmed?: boolean;
 };
 
+/** Reconcile the reported count with listed shells before excluding safety
+ *  holds. Owner holds can be counted while shared holds are only appended to
+ *  the rows. Counts beyond the available rows still represent running work. */
+export function activeShellJobCount(
+  shellJobs: Snapshot['shellJobs'],
+  rows: readonly Pick<JobRow, 'finished' | 'terminationUnconfirmed'>[] = shellJobs?.jobs ?? []
+): number {
+  const unfinished = rows.filter((row) => !row.finished);
+  const heldCount = unfinished.filter((row) => row.terminationUnconfirmed === true).length;
+  return Math.max(Number(shellJobs?.count) || 0, unfinished.length) - heldCount;
+}
+
 /** Where a Stop (or Release) request stands; absent before the user acted. */
 export type ShellStopState = 'stopping' | 'failed' | undefined;
 export type ShellRowAction = 'stop' | 'stopping' | 'retry' | 'dismiss' | 'release';

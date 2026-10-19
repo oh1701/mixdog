@@ -103,6 +103,15 @@ export function createAutoBackground({
       stderrPath,
     });
     if (!job) {
+      // The native foreground identity may be released while promotion is
+      // pending. Exit/close settlement was suppressed by our promotion claim;
+      // resume it instead of inventing a kill of an already-exited child.
+      // The shared close/drain grace still gates output and lease cleanup.
+      if (run.child.exitCode != null || run.child.signalCode != null) {
+        run.autoBackgrounded = false;
+        await run.resumeExitSettlement();
+        return;
+      }
       killAfterFailedPromotion(run, reason, promotionFailure);
       return;
     }

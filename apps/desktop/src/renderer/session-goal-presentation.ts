@@ -1,4 +1,5 @@
 import type { GoalSnapshot, Snapshot } from './desktop-types';
+import { activeShellJobCount } from './background-jobs-model';
 import { t, uiFormatLocale } from './i18n';
 
 export type GoalDisplayStatus = NonNullable<GoalSnapshot['status']> | 'responding';
@@ -6,7 +7,7 @@ export type GoalDisplayStatus = NonNullable<GoalSnapshot['status']> | 'respondin
 type GoalExecutionSnapshot = Pick<Snapshot, 'busy' | 'commandBusy' | 'toolApproval' | 'shellJobs'>;
 
 export function goalHasBackgroundWork(snapshot: GoalExecutionSnapshot, agentWorking = false): boolean {
-  return agentWorking || Number(snapshot.shellJobs?.count) > 0 || Boolean(snapshot.shellJobs?.jobs?.length);
+  return agentWorking || activeShellJobCount(snapshot.shellJobs) > 0;
 }
 
 // Execution and durable intent are different facts. A reply can be in flight

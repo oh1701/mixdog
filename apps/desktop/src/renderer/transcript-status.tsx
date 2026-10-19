@@ -9,6 +9,7 @@ import { modelDisplayName, modelRouteDisplayParts } from './provider-display';
 import { uiCurrency } from './ui-format';
 import { useClock } from './use-clock';
 import { liveAgentRows } from './agent-activity-model';
+import { activeShellJobCount } from './background-jobs-model';
 import { onSessionPreviewsDeleted } from './image-preview-store';
 import { goalHasBackgroundWork } from './session-goal-presentation';
 import { MxIcon } from './MxIcon';
@@ -564,7 +565,7 @@ export type BackgroundWorkCounts = { shell: number; agent: number };
  *  Same facts as goalHasBackgroundWork: shell jobs plus non-queued agents. */
 export function backgroundWorkCounts(snapshot: Snapshot): BackgroundWorkCounts | undefined {
   const agent = liveAgentRows(snapshot).filter((row) => !row.queued).length;
-  const shell = Math.max(Number(snapshot.shellJobs?.count) || 0, snapshot.shellJobs?.jobs?.length || 0);
+  const shell = activeShellJobCount(snapshot.shellJobs);
   return goalHasBackgroundWork(snapshot, agent > 0) ? { shell, agent } : undefined;
 }
 
