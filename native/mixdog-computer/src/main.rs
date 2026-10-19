@@ -15,6 +15,8 @@ mod observer;
 mod platform;
 mod protocol;
 mod session;
+#[cfg(any(target_os = "macos", test))]
+mod target_input;
 
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();

@@ -108,7 +108,7 @@ export function createCaptureAfter(
       host.assertExecutionNotAborted();
       // User takeover belongs to the command queue, not the ordinary
       // observation-retry path. The input may already have been delivered.
-      if (computerErrorCode(error) === 'user_input_active') throw error;
+      if (['user_input_active', 'target_input_observation_unavailable'].includes(computerErrorCode(error))) throw error;
       return { metadata: { ok: false, window_id: windowId, error: (error as Error).message || String(error) } };
     }
   };

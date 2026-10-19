@@ -6,7 +6,7 @@
  */
 import { framePoint } from '../observation/analysis';
 import type { CaptureFrame, ComputerCommand } from '../shared/types';
-import { OBSERVATION_BOUND_INPUT_ACTIONS, PIXEL_INPUT_ACTIONS } from './action-sets';
+import { OBSERVATION_BOUND_INPUT_ACTIONS, PIXEL_INPUT_ACTIONS, READ_ACTIONS } from './action-sets';
 import type { InputResolutionHost, ResolvedInputTarget } from './input-resolution';
 
 export type InputTargetHost = Pick<InputResolutionHost, 'requireValidFrame' | 'freshObservedWindowScope'>;
@@ -121,6 +121,8 @@ export async function resolveInputTarget(
     );
   }
   if (OBSERVATION_BOUND_INPUT_ACTIONS.has(action)) {
+    bindObservedScope(host, command, action, target, trustedSequenceContinuation);
+  } else if (process.platform === 'darwin' && command.delivery !== 'foreground' && target.targetWindowId && !READ_ACTIONS.has(action)) {
     bindObservedScope(host, command, action, target, trustedSequenceContinuation);
   }
   return target;

@@ -10,7 +10,7 @@ use std::sync::Arc;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
-mod macos;
+pub(crate) mod macos;
 mod unsupported;
 
 /// A native top-level window number: a CGWindowID on macOS, an XID on X11.

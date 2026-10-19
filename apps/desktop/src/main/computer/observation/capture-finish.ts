@@ -102,6 +102,10 @@ export async function finishCapture(
     ocrPayload: state.ocrPayload,
   });
   payload.foreground_input_ready = state.foregroundReady;
+  if (process.platform === 'darwin' && inputObservation?.target) {
+    payload.target_input_ready = inputObservation.target.ready;
+    if (inputObservation.target.reason) payload.target_input_reason = inputObservation.target.reason;
+  }
   if (state.foregroundInputReason) payload.foreground_input_reason = state.foregroundInputReason;
   if (state.accessibilityRetryAt) {
     payload.accessibility_cache = 'timed_out_provider';

@@ -180,6 +180,15 @@ impl Host {
             return Err(format!("read_only run: '{action}' is a mutation"));
         }
         let input_scope = req.delivery_foreground() && !read;
+        #[cfg(target_os = "macos")]
+        let target_scope = if !req.delivery_foreground() && !read
+            && !matches!(action.as_str(), "clipboard_write" | "launch" | "release_session" | "release_held_input" | "release_sequence_holds" | "restore_input_state")
+            && (action != "wait" || req.has("window_id"))
+        {
+            Some(platform::macos::target_input::Guard::begin(req)?)
+        } else {
+            None
+        };
         if input_scope {
             let mut scope = self.scope.borrow_mut();
             match (
@@ -193,6 +202,18 @@ impl Host {
             }
         }
         let result = self.dispatch_action(&action, req);
+        #[cfg(target_os = "macos")]
+        let result = if let Some(guard) = target_scope {
+            // Check even when the route returned an "unsupported" result: lost
+            // evidence is fatal, never a reason to try another delivery path.
+            let finished = guard.finish();
+            match result {
+                // A nested dispatch's cleanup uncertainty must not be hidden
+                // by the outer guard's now-unavailable observation.
+                Err(error) if error.starts_with("input_cleanup_unconfirmed:") => Err(error),
+                result => finished.and(result),
+            }
+        } else { result };
         if input_scope {
             self.scope.borrow_mut().end();
         }
@@ -239,7 +260,19 @@ impl Host {
             "invoke_menu" => self.invoke_menu(req),
             "window_integrity" => self.window_integrity(req),
             "input_recovery_state" => self.input_recovery_state(req),
-            "input_idle_state" => Ok(self.input_idle_state()),
+            "input_idle_state" => {
+                let result = self.input_idle_state();
+                #[cfg(target_os = "macos")]
+                let result = {
+                    let mut result = result;
+                    if req.has("window_id") {
+                        let window = req.text("window_id");
+                        result.insert("target_observation".into(), platform::macos::target_input::observation(&window));
+                    }
+                    result
+                };
+                Ok(result)
+            }
             "restore_input_state" => self.restore_input_state(req),
             "move_window" => self.move_window(req),
             "key" => self.do_key(req),
@@ -285,6 +318,8 @@ impl Host {
     /// The host's grant for this request: an expiry, and when present, the one
     /// window and process identity the input may reach.
     fn authorize(&self, req: &Req, actual: Wid) -> Res<()> {
+        #[cfg(target_os = "macos")]
+        platform::macos::target_input::check_window(actual)?;
         if let Some(expires) = req.int("authorization_expires_at") {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -478,6 +513,12 @@ impl Host {
     ) -> Res<Obj> {
         if error.contains("input_cleanup_unconfirmed:") {
             return Err("input_cleanup_unconfirmed: background input release was not acknowledged; do not replay input".into());
+        }
+        #[cfg(target_os = "macos")]
+        if error.starts_with("target_input_observation_unavailable:")
+            || error.starts_with("user_input_active:")
+        {
+            return Err(error.into());
         }
         let mut code = "background_unavailable";
         let mut detail = error.to_string();

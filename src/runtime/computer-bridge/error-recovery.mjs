@@ -79,6 +79,14 @@ function foregroundRecovery(code, target) {
 
 function recoveryForCode(code, args) {
   const target = targetLabel(args);
+  if (code === 'target_input_observation_unavailable') {
+    return {
+      code,
+      next: 'diagnose',
+      guidance:
+        'Target input attribution is unavailable, so Computer Use stopped safely. Do not replay input or switch to foreground delivery. Diagnose the exact target. Cleanup must be confirmed and the user must Resume explicitly; then capture fresh target state before any new input.',
+    };
+  }
   if (code === 'computer_background_cleanup_unconfirmed') {
     return {
       code,

@@ -233,6 +233,8 @@ impl Host {
                     valued.insert("action".into(), json!("type"));
                     return Ok(valued);
                 }
+                #[cfg(target_os = "macos")]
+                self.authorize(req, target)?;
                 if let Err(error) = element.focus() {
                     let message = format!("element accepts no settable value and could not take keyboard focus ({error}); use explicit foreground delivery");
                     return Ok(self.background_unavailable(

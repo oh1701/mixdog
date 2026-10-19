@@ -59,6 +59,11 @@ test(
         allowedWindowIds: ['hwnd:0x1'],
         cursorX: 3100,
         cursorY: 1200,
+        observedScope: {
+          inputObservation: {
+            target: { ready: true, monitor: 'fixture:app', sequence: 0, windowId: 'hwnd:0x1' },
+          },
+        },
       }),
       claimComputerTargets: async () => {},
       readComputerWindows: async () => [],

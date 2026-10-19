@@ -67,12 +67,22 @@ function fixture(overrides = {}) {
   const callPowerShell = async (request) => {
     requests.push(request);
     const supplied = await overrides.native?.(request);
-    if (supplied) return supplied;
-    if (request.action === 'input_idle_state')
+    if (request.action === 'input_idle_state') {
+      const result = supplied?.result ?? { observer_ready: true, monitor: 'worker-a', sequence: 3 };
       return {
-        ok: true,
-        result: { observer_ready: true, monitor: 'worker-a', sequence: 3 },
+        ...(supplied ?? { ok: true }),
+        result: {
+          ...result,
+          target_observation: result.target_observation ?? {
+            ready: result.observer_ready,
+            monitor: `${result.monitor}:app`,
+            sequence: result.sequence,
+            window_id: request.window_id,
+          },
+        },
       };
+    }
+    if (supplied) return supplied;
     if (request.action === 'window_bounds') return { ok: true, result: bounds };
     if (request.action === 'snapshot')
       return {
@@ -766,7 +776,7 @@ test('unavailable input observers remain distinguishable from user intervention 
         return { ok: true, result: { observer_ready: false, monitor: 'worker-a', sequence: 3 } };
       },
     });
-    const result = await f.run(() =>
+    const capture = () => f.run(() =>
       f.capture.captureComputer({
         action: 'capture',
         mode: 'vision',
@@ -774,6 +784,12 @@ test('unavailable input observers remain distinguishable from user intervention 
         session_id: 'a',
       })
     );
+    if (process.platform === 'darwin') {
+      await assert.rejects(capture, /target_input_observation_unavailable/);
+      assert.equal(f.state.observedWindowBySession.has('a'), false);
+      continue;
+    }
+    const result = await capture();
     assert.equal(result.payload.ok, true);
     assert.equal(result.payload.foreground_input_ready, false);
     assert.equal(result.payload.foreground_input_reason, 'input_observer_unavailable');
@@ -796,7 +812,7 @@ test('failed accessibility workers permit fresh pixels and OCR without replaying
       }
     },
   });
-  const result = await f.run(() =>
+  const capture = () => f.run(() =>
     f.capture.captureComputer({
       action: 'capture',
       mode: 'state',
@@ -805,12 +821,63 @@ test('failed accessibility workers permit fresh pixels and OCR without replaying
       session_id: 'a',
     })
   );
+  if (process.platform === 'darwin') {
+    await assert.rejects(capture, /target_input_observation_unavailable/);
+    assert.equal(f.state.observedWindowBySession.has('a'), false);
+    assert.equal(f.requests.filter((request) => request.action === 'snapshot').length, 1);
+    return;
+  }
+  const result = await capture();
   assert.equal(result.payload.ok, true);
   assert.ok(result.image);
   assert.equal(result.payload.foreground_input_ready, true);
   assert.equal(f.requests.filter((request) => request.action === 'snapshot').length, 1);
   assert.equal(f.requests.filter((request) => request.action === 'ocr_image').length, 1);
   assert.equal(f.state.freshObservedWindowScope({ session_id: 'a' }).inputObservation.monitor, 'worker-b');
+});
+
+test('macOS unrelated app input preserves background capture and dispatch, but not foreground authority', {
+  skip: process.platform !== 'darwin',
+}, async () => {
+  let sequence = 0;
+  const f = fixture({
+    native: (request) => request.action === 'input_idle_state' ? {
+      ok: true,
+      result: {
+        observer_ready: true, monitor: 'worker', sequence: sequence++,
+        target_observation: { ready: true, monitor: 'target-app', sequence: 7, window_id: 'hwnd:0x1' },
+      },
+    } : undefined,
+  });
+  const command = { action: 'capture', mode: 'vision', window_id: 'hwnd:0x1', session_id: 'a' };
+  const observation = await f.run(() => f.capture.captureComputer(command));
+  assert.equal(observation.payload.ok, true);
+  assert.equal(observation.payload.foreground_input_ready, false);
+  assert.equal(observation.payload.foreground_input_reason, 'user_input_during_capture');
+  const requests = [];
+  const dispatch = createInputDispatch({
+    ...f.host,
+    isObserveOnly: () => false,
+    callPowerShell: async (request) => { requests.push(request); return { ok: true }; },
+  }, createComputerExecutionPolicy());
+  const target = {
+    targetWindowId: 'hwnd:0x1', allowedWindowIds: ['hwnd:0x1'],
+    observedScope: f.state.freshObservedWindowScope(command),
+  };
+  await dispatch({ action: 'key', keys: '{TAB}', session_id: 'a' }, 'key', target);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].observed_target_input_monitor_id, 'target-app');
+  assert.equal(requests[0].observed_target_input_user_sequence, 7);
+  assert.equal(requests[0].observed_input_monitor_id, undefined);
+  await assert.rejects(
+    dispatch({ action: 'key', delivery: 'foreground', session_id: 'a' }, 'key', target),
+    /foreground_input_not_ready/
+  );
+  await assert.rejects(
+    dispatch({ action: 'key', keys: '{TAB}', session_id: 'a' }, 'key', { ...target, observedScope: undefined }),
+    /target_input_observation_unavailable/
+  );
+  assert.equal(requests.length, 1, 'neither unsafe path sends input');
 });
 
 test('another session changing a resolved target during preparation still prevents dispatch', {

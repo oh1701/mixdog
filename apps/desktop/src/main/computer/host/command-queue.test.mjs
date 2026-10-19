@@ -521,13 +521,15 @@ test('user input detected by a capture shows waiting controls and keeps user wai
 test('a read whose observer changed fails alone; only input takes the desktop back', {
   timeout: 3000,
 }, async (t) => {
-  for (const [action, takesOver] of [
-    ['capture', false],
-    ['click', true],
+  for (const [action, takesOver, code] of [
+    ['capture', false, 'input_observation_unavailable'],
+    ['click', true, 'input_observation_unavailable'],
+    ['capture', true, 'target_input_observation_unavailable'],
+    ['click', true, 'target_input_observation_unavailable'],
   ]) {
     const f = fixture(t, {
       runCommand: async () => {
-        throw new Error('input_observation_unavailable: observation worker changed during capture');
+        throw new Error(`${code}: observation worker changed during capture`);
       },
       recaptureRequiredReply: async () => null,
     });

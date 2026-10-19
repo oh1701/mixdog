@@ -63,11 +63,14 @@ pub const kCGMouseButtonCenter: u32 = 2;
 
 pub const kCGHIDEventTap: u32 = 0;
 pub const kCGSessionEventTap: u32 = 1;
+pub const kCGAnnotatedSessionEventTap: u32 = 2;
 pub const kCGHeadInsertEventTap: u32 = 0;
 pub const kCGEventTapOptionListenOnly: u32 = 1;
 
 pub const kCGMouseEventClickState: u32 = 1;
+pub const kCGMouseEventButtonNumber: u32 = 3;
 pub const kCGKeyboardEventKeycode: u32 = 9;
+pub const kCGEventTargetUnixProcessID: u32 = 40;
 pub const kCGEventSourceUserData: u32 = 42;
 /// The window an event belongs to, as AppKit reads it to route the event
 /// inside its process; undocumented, but what NSEvent itself fills in.
@@ -108,6 +111,9 @@ pub type CGEventTapCallBack = extern "C" fn(
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     pub fn CGEventCreate(source: CGEventSourceRef) -> CGEventRef;
+    pub fn CGEventCreateCopy(event: CGEventRef) -> CGEventRef;
+    pub fn CGEventGetType(event: CGEventRef) -> u32;
+    pub fn CGEventSetType(event: CGEventRef, kind: u32);
     pub fn CGEventCreateMouseEvent(
         source: CGEventSourceRef,
         kind: u32,
@@ -158,8 +164,14 @@ extern "C" {
         user_info: *mut c_void,
     ) -> CFMachPortRef;
     pub fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+    pub fn CGEventTapIsEnabled(tap: CFMachPortRef) -> bool;
     pub fn CGPreflightScreenCaptureAccess() -> bool;
     pub fn CGSessionCopyCurrentDictionary() -> CFDictionaryRef;
+}
+
+#[link(name = "Carbon", kind = "framework")]
+extern "C" {
+    pub fn IsSecureEventInputEnabled() -> bool;
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]

@@ -13,6 +13,7 @@ mod observe;
 mod ocr;
 mod skylight;
 mod windows;
+pub(crate) mod target_input;
 
 use super::{AppEntry, Background, Button, Desktop, Launched, Wid, WinState, WindowInfo};
 use crate::a11y::Accessibility;
@@ -95,6 +96,7 @@ impl MacBackground {
     /// window made active inside its app so the gesture is not spent as a
     /// first mouse.
     fn target(&self, handle: Wid, flags: u64) -> Result<(i32, Dest), String> {
+        target_input::require_window(handle)?;
         let window = windows::one(handle)
             .filter(|window| window.pid > 0)
             .ok_or_else(|| {
@@ -121,6 +123,10 @@ impl MacBackground {
 
 impl Background for MacBackground {
     fn validate(&self, window: Wid, _action: &str) -> Result<(), String> {
+        target_input::check_window(window)?;
+        if matches!(_action, "press" | "release" | "mouse_down" | "mouse_up") {
+            return Err("background_unsupported|standalone background holds cannot outlive target observation; use a scoped click or drag; no input sent".into());
+        }
         require_trust().map_err(|error| format!("background_unsupported|{error}"))?;
         window_pid(window).map(|_| ())
     }

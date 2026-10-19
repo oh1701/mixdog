@@ -109,8 +109,9 @@ test('explicit AX observation suppresses remembered OCR only for that read', asy
   assert.equal(requests[1].ocr_language, 'ko');
 });
 
-test('user input during post-action capture reaches the pause owner without a retry', async () => {
-  const reason = new Error('user_input_active: user input changed during capture');
+for (const code of ['user_input_active', 'target_input_observation_unavailable']) {
+test(`${code} during post-action capture reaches the pause owner without a retry`, async () => {
+  const reason = new Error(`${code}: target observation interrupted`);
   let captures = 0;
   const captureAfter = createCaptureAfter(
     { sessionIdFor: () => 'test', assertExecutionNotAborted() {} },
@@ -123,3 +124,4 @@ test('user input during post-action capture reaches the pause owner without a re
   await assert.rejects(captureAfter({ action: 'type' }, 'hwnd:0x1', 0), (error) => error === reason);
   assert.equal(captures, 1);
 });
+}

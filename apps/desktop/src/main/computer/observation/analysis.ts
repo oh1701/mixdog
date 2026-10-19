@@ -469,7 +469,7 @@ export function recommendedRecovery(
   if (code === 'target_mismatch' || code === 'stale_target' || code === 'stale_frame' || code === 'user_input_active') {
     return 'recapture';
   }
-  if (code === 'foreground_unavailable' || code === 'foreground_changed') {
+  if (code === 'foreground_unavailable' || code === 'foreground_changed' || code === 'target_input_observation_unavailable') {
     return 'user';
   }
   // A target class that cannot accept posted input never becomes able to through

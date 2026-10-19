@@ -22,6 +22,14 @@ test('cleanup recovery requires user Stop and verified cleanup, not an unconditi
   assert.match(recovery.guidance, /do not replay input or reset the guard/i);
 });
 
+test('unknown target attribution requires explicit recovery, fresh capture and no delivery fallback', () => {
+  const recovery = computerToolErrorRecovery('target_input_observation_unavailable: tap lost');
+  assert.equal(recovery.next, 'diagnose');
+  assert.match(recovery.guidance, /Resume explicitly/);
+  assert.match(recovery.guidance, /capture fresh target state/);
+  assert.match(recovery.guidance, /Do not replay input or switch to foreground/);
+});
+
 test('only a definite no-input refusal permits choosing delivery without mandatory recapture', () => {
   assert.equal(
     computerResultRecovery({

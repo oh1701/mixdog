@@ -22,6 +22,9 @@ extern "C" fn on_event(
     // SAFETY: user_info is the leaked TapContext this tap was created with.
     let context = unsafe { &*(user_info as *const TapContext) };
     if kind == kCGEventTapDisabledByTimeout || kind == kCGEventTapDisabledByUserInput {
+        // Re-enabling cannot erase a period in which input went unobserved.
+        context.shared.record(false);
+        super::target_input::lose("global event tap gap; restart observer");
         let tap = context.tap.load(std::sync::atomic::Ordering::SeqCst);
         if !tap.is_null() {
             // SAFETY: tap is the live mach port this callback belongs to.
@@ -32,6 +35,29 @@ extern "C" fn on_event(
     // SAFETY: event is the live event being observed.
     let origin = unsafe { CGEventGetIntegerValueField(event, kCGEventSourceUserData) };
     context.shared.record(origin == context.marker);
+    event
+}
+
+extern "C" fn on_target_event(
+    _proxy: *mut c_void,
+    kind: u32,
+    event: CGEventRef,
+    user_info: *mut c_void,
+) -> CGEventRef {
+    if kind == kCGEventTapDisabledByTimeout || kind == kCGEventTapDisabledByUserInput {
+        super::target_input::lose("target event tap gap; restart observer");
+        return event;
+    }
+    if event.is_null() {
+        super::target_input::lose("target event is unavailable; restart observer");
+        return event;
+    }
+    let context = unsafe { &*(user_info as *const TapContext) };
+    let (origin, pid) = unsafe {
+        (CGEventGetIntegerValueField(event, kCGEventSourceUserData),
+         CGEventGetIntegerValueField(event, kCGEventTargetUnixProcessID))
+    };
+    super::target_input::record(origin == context.marker, pid);
     event
 }
 
@@ -77,6 +103,7 @@ pub fn start(shared: Arc<Shared>, marker: i64) {
                 )
             };
             if tap.is_null() {
+                super::target_input::lose("global event tap unavailable");
                 poll_idle(shared);
                 return;
             }
@@ -86,13 +113,37 @@ pub fn start(shared: Arc<Shared>, marker: i64) {
                     .tap
                     .store(tap, std::sync::atomic::Ordering::SeqCst);
                 let source = CFMachPortCreateRunLoopSource(std::ptr::null(), tap, 0);
+                if source.is_null() {
+                    super::target_input::lose("global event tap run-loop source unavailable");
+                    shared.set_ready(false);
+                    return;
+                }
                 CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes);
                 CGEventTapEnable(tap, true);
+                // Only annotated events carry the event-time destination.
+                // A zero/missing destination is never replaced by current focus.
+                let target_tap = CGEventTapCreate(
+                    kCGAnnotatedSessionEventTap, kCGHeadInsertEventTap,
+                    kCGEventTapOptionListenOnly, mask(), on_target_event, context as _,
+                );
+                if target_tap.is_null() {
+                    super::target_input::lose("annotated target event tap unavailable");
+                } else {
+                    let target_source = CFMachPortCreateRunLoopSource(std::ptr::null(), target_tap, 0);
+                    if target_source.is_null() {
+                        super::target_input::lose("target event tap run-loop source unavailable");
+                    } else {
+                        CFRunLoopAddSource(CFRunLoopGetCurrent(), target_source, kCFRunLoopCommonModes);
+                        CGEventTapEnable(target_tap, true);
+                        super::target_input::start(target_tap);
+                    }
+                }
             }
             shared.set_ready(true);
             // SAFETY: runs this thread's run loop for the life of the process.
             unsafe { CFRunLoopRun() };
             shared.set_ready(false);
+            super::target_input::lose("input observer stopped; restart observer");
         })
         .ok();
 }

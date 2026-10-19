@@ -87,7 +87,51 @@ test('an unresponsive renderer cannot hold the typing readiness check indefinite
   assert.equal(await waitForElectronTypingTarget(window, undefined, async () => {}), false);
 });
 
-test('observation-only enabled during focus confirmation prevents text after the preparatory click', async () => {
+test('macOS app-owned text stays on the native target-guarded path', {
+  skip: process.platform !== 'darwin',
+}, async () => {
+  const { createInputDispatch } = await import('./input-dispatch.ts');
+  let nativeWrites = 0;
+  globalThis.typingWindows = [{
+    isDestroyed: () => false,
+    getNativeWindowHandle: () => Buffer.from([1, 0, 0, 0]),
+    getMediaSourceId: () => 'window:1:0',
+    webContents: {
+      isDestroyed: () => false,
+      insertText: async () => assert.fail('unguarded Electron text must not run'),
+    },
+  }];
+  try {
+    const dispatch = createInputDispatch({
+      assertExecutionNotAborted() {},
+      isObserveOnly: () => false,
+      sessionIdFor: () => 'typing-fixture',
+      callPowerShell: async (request) => {
+        nativeWrites++;
+        assert.equal(request.action, 'type');
+        assert.equal(request.delivery, 'background');
+        assert.equal(request.observed_target_input_monitor_id, 'app');
+        return { ok: true, result: { delivery_accepted: true } };
+      },
+    }, { assertAction() {}, dispatchAuthority: () => ({}) });
+    await dispatch({ action: 'type', text: 'fixture' }, 'type', {
+      targetWindowId: 'hwnd:0x1',
+      allowedWindowIds: ['hwnd:0x1'],
+      observedScope: {
+        inputObservation: {
+          target: { ready: true, monitor: 'app', sequence: 0, windowId: 'hwnd:0x1' },
+        },
+      },
+    });
+    assert.equal(nativeWrites, 1);
+  } finally {
+    delete globalThis.typingWindows;
+  }
+});
+
+test('observation-only enabled during focus confirmation prevents text after the preparatory click', {
+  skip: process.platform === 'darwin' && 'macOS uses the native target guard instead of Electron insertText',
+}, async () => {
   const { createInputDispatch } = await import('./input-dispatch.ts');
   let observeOnly = false,
     clicks = 0,
@@ -140,7 +184,9 @@ test('observation-only enabled during focus confirmation prevents text after the
   }
 });
 
-test('a failed preparatory click retains uncertainty and never sends app-owned text', async () => {
+test('a failed preparatory click retains uncertainty and never sends app-owned text', {
+  skip: process.platform === 'darwin' && 'macOS uses the native target guard instead of Electron insertText',
+}, async () => {
   const { createInputDispatch } = await import('./input-dispatch.ts');
   for (const uncertain of [true, false]) {
     let textWrites = 0;

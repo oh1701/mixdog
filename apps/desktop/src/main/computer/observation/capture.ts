@@ -16,7 +16,7 @@ import {
   explicitScreenCapture,
   resolveCaptureWindowId,
 } from './capture-target';
-import { createInputObservationReader, foregroundInputState } from './capture-input-observation';
+import { assertTargetInputUnchanged, createInputObservationReader, foregroundInputState } from './capture-input-observation';
 import { createVisualOnlyCache, visualOnlyCapabilityKey, visualOnlyEligible } from './capture-visual-only';
 import {
   type AccessibilityRead,
@@ -123,7 +123,8 @@ export function createCaptureEngine(host: CaptureEngineHost) {
     assertExecutionNotAborted();
     const observationGuard = host.beginObservation(windowId);
     try {
-      const readInputObservation = createInputObservationReader(host, command);
+      const targetScoped = process.platform === 'darwin' && Boolean(windowId);
+      const readInputObservation = createInputObservationReader(host, command, () => windowId);
       let inputObservation = await readInputObservation();
       const visualOnlyKey = visualOnlyCapabilityKey(sessionIdFor(command), windowId);
       const visualOnlyOk = visualOnlyEligible(command, mode, windowId);
@@ -166,7 +167,7 @@ export function createCaptureEngine(host: CaptureEngineHost) {
           timings,
         });
       const accessibilityRead = await readAccessibility();
-      if (!visualOnlyCacheHit && (accessibilityRead?.error || accessibilityRead?.response?.ok === false)) {
+      if (!targetScoped && !visualOnlyCacheHit && (accessibilityRead?.error || accessibilityRead?.response?.ok === false)) {
         inputObservation = await readInputObservation();
       }
       const screenshotRead = await readScreenshotCapture(captureScreenshot, {
@@ -258,6 +259,7 @@ export function createCaptureEngine(host: CaptureEngineHost) {
           });
       host.assertExecutionNotAborted();
       const inputAfter = await readInputObservation();
+      if (targetScoped) assertTargetInputUnchanged(inputObservation, inputAfter);
       if (inputObservation && inputAfter && inputObservation.monitor !== inputAfter.monitor) {
         if (replacementRead || mode === 'ax') {
           throw new Error('input_observation_unavailable: observation worker changed during capture');
@@ -266,7 +268,7 @@ export function createCaptureEngine(host: CaptureEngineHost) {
         return await captureComputer(command, forcedWindowId, true);
       }
       const { foregroundReady, foregroundInputReason } = foregroundInputState(inputObservation, inputAfter);
-      if (foregroundInputReason === 'user_input_during_capture') {
+      if (!targetScoped && foregroundInputReason === 'user_input_during_capture') {
         // Actual user input pauses the session; an unavailable observer does
         // not. Never publish actionable targets from the interrupted capture.
         throw new Error('user_input_active: user input changed during capture');

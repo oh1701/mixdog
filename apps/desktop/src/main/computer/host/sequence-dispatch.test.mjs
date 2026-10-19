@@ -28,7 +28,10 @@ const scope = {
   primaryWindowId: 'hwnd:0x1',
   relatedWindowIds: ['hwnd:0x1'],
   observedAt: Date.now(),
-  inputObservation: { ready: true, monitor: 'fixture', sequence: 0 },
+  inputObservation: {
+    ready: true, monitor: 'fixture', sequence: 0,
+    target: { ready: true, monitor: 'fixture:app', sequence: 0, windowId: 'hwnd:0x1' },
+  },
 };
 // Native coordinates equal DIPs on macOS; the fixture's screen has no Linux
 // scaling, so these host-level checks run where native points are known.
@@ -160,6 +163,14 @@ test(
       ]
     );
     assert.deepEqual(f.counters(), { separateReads: 0, separateSettles: 0, recoveries: 0 });
+    if (process.platform === 'darwin') {
+      for (const request of f.requests) {
+        assert.equal(request.window_id, 'hwnd:0x1');
+        assert.equal(request.observed_target_input_monitor_id, 'fixture:app');
+        assert.equal(request.observed_target_input_user_sequence, 0);
+        assert.equal(request.step.observed_target_input_monitor_id, request.observed_target_input_monitor_id);
+      }
+    }
     assert.deepEqual(f.captures, ['hwnd:0x1']);
     assert.deepEqual(f.checkpoints, [
       { completed: 0, inFlight: undefined },

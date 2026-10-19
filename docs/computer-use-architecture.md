@@ -1,6 +1,6 @@
 # Computer Use module boundaries
 
-This layout preserves the existing public tool schema and native host protocol.
+This layout preserves the existing public tool schema.
 
 - `observation/capture.ts` sequences a capture and owns its semantic baseline.
   `capture-pixels.ts` acquires window-owned pixels and zooms; `capture-ocr.ts`
@@ -24,6 +24,38 @@ This layout preserves the existing public tool schema and native host protocol.
   and esbuild harness bundles. Installed execution needs no loose source files.
 
 ## Tests
+
+### macOS target input protection (implemented; native acceptance pending)
+
+Window captures bracket reads with both global and target-scoped input
+observations. Unrelated app activity invalidates foreground authority but not
+background authority. `input_idle_state(window_id)` retains its global fields
+and adds `target_observation`; background target mutations and sequence
+envelopes carry `observed_target_input_monitor_id` and
+`observed_target_input_user_sequence`. The same session worker owns both reads
+and delivery. Worker replacement requires a fresh capture.
+
+The macOS listen-only annotated event tap uses event destination process IDs,
+bound to process start identity, rather than inferring past input from current
+focus. Same-process auxiliary windows and verified direct parent/child
+processes share interruption protection. Unknown attribution, event-tap gaps,
+secure input, and target disappearance refuse input. Observer gaps remain
+latched until observer replacement; Resume alone does not repair them.
+Foreground retains its global input guard. Windows/Linux are unchanged.
+
+An interrupted command is never replayed. Pending owned releases are attempted
+only against the original process; Quartz posting cannot acknowledge delivery,
+so required cleanup reports `computer_background_cleanup_unconfirmed` and
+requires manual recovery. Standalone background mouse holds are refused.
+macOS app-owned text uses the guarded native path, never unguarded Electron
+`insertText` or automatic foreground fallback.
+
+Native compilation and 25 unit tests pass on macOS with an isolated Rust
+toolchain. Two-app physical-input acceptance remains pending. In particular,
+ordinary event destination availability, asynchronous event
+delivery, and brief secure-input intervals between checks are not proven by
+the isolated tests. This implementation is not release-qualified until these
+limitations are resolved or verified.
 
 Fast behavior/contract tests use `*.test.mjs`. Worker process lifecycle, native
 compilation and Windows fixture execution use `*.slow.test.mjs`. Native fixtures

@@ -47,8 +47,12 @@ export async function executeComputerSequenceSteps(
     }
     // The outer queue owns pause, cleanup and resume. Turning this into a
     // normal failed row would bypass that queue and drop the pending request.
-    if (payload.code === 'user_input_active') {
-      throw new Error('user_input_active: sequence yielded during input; dispatch outcome is uncertain');
+    if (
+      payload.code === 'user_input_active' ||
+      payload.code === 'target_input_observation_unavailable' ||
+      (process.platform === 'darwin' && payload.code === 'input_cleanup_unconfirmed')
+    ) {
+      throw new Error(`${payload.code}: sequence yielded during input; dispatch outcome is uncertain`);
     }
     const transition = payload.window_transition as SequenceWindowTransition | undefined;
     lastTransition = transition || null;

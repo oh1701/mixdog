@@ -143,7 +143,11 @@ export function createCommandAttempt(deps: CommandAttemptDeps) {
     const code = computerLogError(error);
     // Actual user input takes control even during a read. A broken or
     // replaced read observer alone is not evidence of user intervention.
-    if (code === 'user_input_active' || (TAKEOVER_CODES.includes(code) && !observesOnly(command))) {
+    if (
+      code === 'user_input_active' ||
+      code === 'target_input_observation_unavailable' ||
+      (TAKEOVER_CODES.includes(code) && !observesOnly(command))
+    ) {
       deps.takeOver(code);
     }
     if (pausedForUserInput(coordinator.snapshot()) && !observesOnly(command)) {

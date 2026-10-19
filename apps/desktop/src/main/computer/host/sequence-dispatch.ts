@@ -20,6 +20,13 @@ export function sequenceStepRequest(step: Record<string, unknown>): Record<strin
     delivery: 'background',
     session_id: step.session_id,
     read_only: step.read_only,
+    ...(process.platform === 'darwin'
+      ? {
+          window_id: step.window_id,
+          observed_target_input_monitor_id: step.observed_target_input_monitor_id,
+          observed_target_input_user_sequence: step.observed_target_input_user_sequence,
+        }
+      : {}),
     // The worker retires refs after the outer request, so the outer carries it.
     ...(step.retain_refs === true ? { retain_refs: true } : {}),
     step,

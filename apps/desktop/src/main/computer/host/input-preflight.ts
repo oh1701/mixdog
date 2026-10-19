@@ -3,7 +3,8 @@ import { normalizeComputerKeySequence } from '../input/keyboard';
 import type { ComputerCommand, PowerShellResponse } from '../shared/types';
 
 export function canUseAppOwnedTextInput(command: ComputerCommand): boolean {
-  return command.action === 'type' && command.delivery !== 'foreground' && !command.ref;
+  // macOS text must traverse the native target guard, including each chunk.
+  return process.platform !== 'darwin' && command.action === 'type' && command.delivery !== 'foreground' && !command.ref;
 }
 
 export function createInputPreflight(host: {

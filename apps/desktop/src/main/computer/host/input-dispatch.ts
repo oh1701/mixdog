@@ -12,6 +12,7 @@ import type { ResolvedInputTarget } from './input-resolution';
 import { assertObservationInputAllowed } from './observation-policy';
 import { sequenceStepRequest } from './sequence-dispatch';
 import { UNKNOWN_WINDOW_INTEGRITY } from './window-reads';
+import { READ_ACTIONS } from './action-sets';
 
 type DispatchHost = Pick<
   CommandRouterHost,
@@ -142,6 +143,12 @@ export function createInputDispatch(host: DispatchHost, policy: ComputerExecutio
     }
     const authority = await authorizeDispatch();
     assertObservationInputAllowed(command, host.isObserveOnly());
+    if (process.platform === 'darwin' && targetWindowId && command.delivery !== 'foreground' && !READ_ACTIONS.has(action)) {
+      const observed = target.observedScope?.inputObservation?.target;
+      if (!observed?.ready || !observed.monitor || !Number.isSafeInteger(observed.sequence) || observed.sequence < 0) {
+        throw new Error('target_input_observation_unavailable: capture a fresh target observation before background input');
+      }
+    }
     const authorizedRequest = { ...powerShellRequest, ...authority };
     if (usePrivilegedWorker) {
       const elevated = await callPowerShellElevated(authorizedRequest);

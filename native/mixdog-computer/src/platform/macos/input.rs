@@ -219,11 +219,22 @@ impl Poster {
         unsafe {
             CGEventSetIntegerValueField(event, kCGEventSourceUserData, self.marker);
             CGEventSetFlags(event, flags);
+            if let Route::Process(pid) = route {
+                if let Err(error) = super::target_input::before_post(pid, event) {
+                    CFRelease(event as *const _);
+                    return Err(error);
+                }
+            }
             match route {
                 Route::System => CGEventPost(kCGHIDEventTap, event),
                 Route::Process(pid) => super::skylight::post_to_pid(pid, event),
             }
+            let checked = match route {
+                Route::Process(pid) => super::target_input::after_post(pid, event),
+                Route::System => Ok(()),
+            };
             CFRelease(event as *const _);
+            checked?;
         }
         Ok(())
     }

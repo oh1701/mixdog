@@ -194,6 +194,14 @@ export interface ComputerInputObservation {
   ready: boolean;
   monitor: string;
   sequence: number;
+  /** macOS background authority, separate from the physical desktop watermark. */
+  target?: {
+    ready: boolean;
+    monitor: string;
+    sequence: number;
+    windowId: string;
+    reason?: string;
+  };
   /** Why the observation was not foreground-ready, carried so a later refusal
    *  can name the cause instead of pointing at a field the caller may not hold. */
   reason?: string;

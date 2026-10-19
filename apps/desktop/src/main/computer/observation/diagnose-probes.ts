@@ -126,6 +126,7 @@ export async function probeInputObservation(host: DiagnoseProbeHost, command: Co
         action: 'input_idle_state',
         session_id: host.sessionIdFor(command),
         read_only: true,
+        ...(process.platform === 'darwin' && command.window_id ? { window_id: command.window_id } : {}),
       },
       DIAGNOSE_ACCESSIBILITY_TIMEOUT_MS
     );
@@ -134,6 +135,7 @@ export async function probeInputObservation(host: DiagnoseProbeHost, command: Co
       probe.result?.observer_ready === true &&
       probe.result?.ready === true &&
       probe.result?.held === false;
+    const target = probe.result?.target_observation as Record<string, unknown> | undefined;
     return {
       ready,
       observer_ready: probe.result?.observer_ready === true,
@@ -142,6 +144,14 @@ export async function probeInputObservation(host: DiagnoseProbeHost, command: Co
       input_held: typeof probe.result?.held === 'boolean' ? probe.result.held : null,
       ...(typeof probe.result?.idleMs === 'number' ? { idle_ms: probe.result.idleMs } : {}),
       ...(!probe.ok ? { error: probe.error || 'input observation probe failed' } : {}),
+      ...(process.platform === 'darwin' && command.window_id
+        ? {
+            target_input_ready: target?.ready === true,
+            ...(target?.ready === true ? {} : {
+              target_input_reason: typeof target?.reason === 'string' ? target.reason : 'target input attribution is unavailable',
+            }),
+          }
+        : {}),
     };
   } catch (error) {
     return { ready: false, error: failureMessage(error) };

@@ -59,5 +59,11 @@ export function powerShellInputRequest(
           observed_input_user_sequence: inputObservation.sequence,
         }
       : {}),
+    ...(process.platform === 'darwin' && command.delivery !== 'foreground' && target.observedScope?.inputObservation?.target
+      ? {
+          observed_target_input_monitor_id: target.observedScope.inputObservation.target.monitor,
+          observed_target_input_user_sequence: target.observedScope.inputObservation.target.sequence,
+        }
+      : {}),
   };
 }

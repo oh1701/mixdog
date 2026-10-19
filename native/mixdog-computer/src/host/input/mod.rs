@@ -56,6 +56,8 @@ impl Host {
                 "ref {reference} is stale or its target changed; take a fresh snapshot/find"
             ));
         }
+        #[cfg(target_os = "macos")]
+        crate::platform::macos::target_input::check_window(parse_window_id(&window))?;
         Ok((element, window))
     }
 

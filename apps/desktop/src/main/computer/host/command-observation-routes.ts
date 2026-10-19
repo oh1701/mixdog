@@ -74,6 +74,16 @@ export async function observationRoute(
   command: ComputerCommand,
   action: string
 ): Promise<ComputerCommandResult | null> {
+  // Legacy window reads must publish the same bracketed target authority as
+  // capture on macOS, rather than authorizing input from pixels/refs alone.
+  if (process.platform === 'darwin' && ['screenshot', 'snapshot', 'find'].includes(action)) {
+    const capture = await host.captureComputer({
+      ...command,
+      action: 'capture',
+      mode: action === 'screenshot' ? 'vision' : 'ax',
+    });
+    return { text: JSON.stringify(capture.payload), ...(capture.image ? { image: capture.image } : {}) };
+  }
   switch (action) {
     case 'verify':
       return await host.verifyWindowState(command);

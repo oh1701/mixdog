@@ -26,6 +26,7 @@ test('preflight uses dispatch grammar and preserves native refs on app-owned tar
   assert.deepEqual(requests[0].steps, [
     { action: 'key', keys: normalizeComputerKeySequence('ctrl-s') },
     { action: 'key', keys: normalizeComputerKeySequence('PageDown') },
+    ...(process.platform === 'darwin' ? [{ action: 'type' }] : []),
     { action: 'type', ref: 's1:e1' },
   ]);
   assert.equal(requests[0].steps[0].keys, '^S');

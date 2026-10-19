@@ -136,22 +136,27 @@ test('executed steps expose distinct phase timings without copying arbitrary met
   }
 });
 
-test('sequence checkpoints retain only completed steps before interrupted input', async () => {
+for (const code of [
+  'user_input_active', 'target_input_observation_unavailable',
+  ...(process.platform === 'darwin' ? ['input_cleanup_unconfirmed'] : []),
+]) {
+test(`sequence checkpoints retain only completed steps before ${code}`, async () => {
   const checkpoints = [];
   await assert.rejects(
     executeComputerSequenceSteps(
       [{ action: 'click' }, { action: 'type' }, { action: 'key' }],
       'hwnd:0x1',
       async (_, index) => {
-        if (index === 1) throw new Error('user_input_active: interrupted');
+        if (index === 1) throw new Error(`${code}: interrupted`);
         return { ok: true };
       },
       (completed) => checkpoints.push(completed)
     ),
-    /user_input_active/
+    new RegExp(code)
   );
   assert.deepEqual(checkpoints, [1]);
 });
+}
 
 test('possibly partial background input is retained as uncertain and stops all follow-up steps', async () => {
   let calls = 0;
