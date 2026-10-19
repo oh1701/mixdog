@@ -101,7 +101,7 @@ export function useSidebarListScroll({
   // that is what keeps tab switches cheap on large session catalogs.
   const recentScrollerRef = useRef<HTMLDivElement | null>(null);
   const recentSentinelRef = useRef<HTMLDivElement | null>(null);
-  const recentScrollAnchorRef = useRef<{ sessionId: string; offset: number } | null>(null);
+  const recentScrollAnchorRef = useRef<{ row: HTMLElement; offset: number }[]>([]);
   const recentRowIdsRef = useRef<string[]>([]);
   const hasMoreRecentRows = visibleRecentRowCount < rows.length;
   const archivedSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -118,23 +118,17 @@ export function useSidebarListScroll({
   const captureRecentScrollAnchor = useCallback(() => {
     const scroller = recentScrollerRef.current;
     if (!scroller || scroller.scrollTop <= 1) {
-      recentScrollAnchorRef.current = null;
+      recentScrollAnchorRef.current = [];
       return;
     }
     const scrollerRect = scroller.getBoundingClientRect();
-    const visible = [...scroller.querySelectorAll<HTMLElement>('.session-row[data-session-id]')].find((row) => {
-      const rect = row.getBoundingClientRect();
-      return rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom;
-    });
-    const sessionId = String(visible?.dataset.sessionId || '');
-    if (!visible || !sessionId) {
-      recentScrollAnchorRef.current = null;
-      return;
-    }
-    recentScrollAnchorRef.current = {
-      sessionId,
-      offset: visible.getBoundingClientRect().top - scrollerRect.top,
-    };
+    // Keep the actual row instances: the same session can also appear in a
+    // project folder, and favoriting remounts it in a different section.
+    // Retain the other visible rows as fallbacks if the first one is removed.
+    recentScrollAnchorRef.current = [...scroller.querySelectorAll<HTMLElement>('.session-row[data-session-id]')]
+      .map((row) => ({ row, rect: row.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom)
+      .map(({ row, rect }) => ({ row, offset: rect.top - scrollerRect.top }));
   }, []);
   const revealWhenSentinelNear = useSessionListPaging(
     recentScrollerRef,
@@ -167,16 +161,13 @@ export function useSidebarListScroll({
       scroller.scrollTop <= 1 &&
       (sessionListInsertedAtTop(previousIds, nextIds) || sessionListKeepsExistingTopInsert(previousIds, nextIds))
     ) {
-      recentScrollAnchorRef.current = null;
+      recentScrollAnchorRef.current = [];
       return;
     }
-    const anchor = recentScrollAnchorRef.current;
-    if (scroller && anchor && scroller.scrollTop > 1) {
-      const row = [...scroller.querySelectorAll<HTMLElement>('.session-row[data-session-id]')].find(
-        (candidate) => candidate.dataset.sessionId === anchor.sessionId
-      );
-      if (row) {
-        const delta = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top - anchor.offset;
+    if (scroller) {
+      const anchor = recentScrollAnchorRef.current.find(({ row }) => scroller.contains(row));
+      if (anchor) {
+        const delta = anchor.row.getBoundingClientRect().top - scroller.getBoundingClientRect().top - anchor.offset;
         if (Number.isFinite(delta) && Math.abs(delta) > 0.5) {
           scroller.scrollTop = Math.max(0, scroller.scrollTop + delta);
         }
